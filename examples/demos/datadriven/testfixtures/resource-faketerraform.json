@@ -1,0 +1,13 @@
+{
+  "kind": "faketerraform",
+  "kind_version": 1,
+  "name": "sample-faketerraform",
+  "labels": {
+    "demo": "datadriven",
+    "sample": "manual",
+    "kind": "faketerraform"
+  },
+  "spec": {
+    "tar_url": "s3://team-bundles/platform.tar"
+  }
+}

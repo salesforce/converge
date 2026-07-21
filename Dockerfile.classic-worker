@@ -1,0 +1,23 @@
+# Runtime-only image for the CLASSIC-demo worker — the reference-example provider
+# set (classicbom composer + fake vpc/db/k8sjob/app + statussink reactor). It is a
+# DEMO worker, not a shipped binary, so it lives outside `just docker`/`just
+# docker-stdworker`; this Dockerfile packages the prebuilt linux/amd64 binary for
+# k8s topology testing of the broker fanout + mesh relay under the classicbom load.
+#
+# Build the binary FIRST on the host (static, CGO_ENABLED=0):
+#   CGO_ENABLED=0 GOOS=linux GOARCH=amd64 go build -trimpath -ldflags='-s -w' \
+#       -o bin/classic-worker.linux-amd64 ./examples/demos/classic/cmd/worker
+# then: docker build --platform linux/amd64 -f Dockerfile.classic-worker -t classic-worker:latest .
+#
+# Base: alpine — tiny, with ca-certificates for the worker's outbound broker TLS. The
+# binary is pure-Go static, so it runs on musl without a libc dependency.
+FROM alpine:3.20
+
+RUN apk add --no-cache ca-certificates
+
+# Prebuilt on the host for linux/amd64 (static, CGO_ENABLED=0).
+COPY bin/classic-worker.linux-amd64 /usr/local/bin/classic-worker
+
+# Config is env-only (BROKER_ADDR, WORKER_MAX_PARALLEL, WORKER_KINDS, HEALTH_ADDR,
+# TLS_*, LOG_*), supplied by the worker Deployment. Serve blocks until ctx ends.
+ENTRYPOINT ["/usr/local/bin/classic-worker"]

@@ -1,0 +1,29 @@
+# Build artifacts
+bin/
+*.test
+*.out
+coverage.txt
+coverage.html
+# Root-built command binaries (produced by `go build ./cmd/...`); never commit
+/converge
+/worker
+
+# Local AWS credentials (sourced before aws/kubectl calls) — never commit
+creds
+
+# Private, non-open-source files kept locally only (e.g. company deploy scripts:
+# private/deploy/{clear-database,create-aurora-global}.sh) — never commit
+private/
+
+# Editor / OS
+.DS_Store
+.idea/
+.vscode/*
+.claude
+!.vscode/extensions.json
+*.swp
+*.swo
+
+# tmp / log
+*.log
+/tmp/

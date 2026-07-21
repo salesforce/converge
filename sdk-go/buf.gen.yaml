@@ -1,0 +1,13 @@
+version: v2
+# Go codegen for the PUBLIC worker contract only — the exact analogue of sdk-ts/buf.gen.yaml.
+# The Go SDK OWNS its wire stubs: worker.proto generates into sdk-go/workerpb (per its
+# go_package option). The mesh proto (converge.mesh.v1) is deliberately NOT generated here —
+# a worker SDK never sees it; it is generated into internal/meshpb by the root buf.gen.yaml.
+# Run from the repo root via `just proto`, scoped with --path proto/converge/worker/v1.
+plugins:
+  - local: protoc-gen-go
+    out: .
+    opt: module=github.com/salesforce/converge
+  - local: protoc-gen-connect-go
+    out: .
+    opt: module=github.com/salesforce/converge

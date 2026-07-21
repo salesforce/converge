@@ -1,0 +1,14 @@
+{
+  "kind": "fakeapp",
+  "kind_version": 1,
+  "name": "sample-fakeapp",
+  "labels": {
+    "demo": "datadriven",
+    "sample": "manual",
+    "kind": "fakeapp"
+  },
+  "spec": {
+    "vpc_id": "vpc-platform",
+    "db_endpoint": "db-platform.internal:5432"
+  }
+}

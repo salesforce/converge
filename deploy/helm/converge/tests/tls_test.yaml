@@ -1,0 +1,89 @@
+# TLS/mTLS/SPIFFE + guard-rail assertions.
+suite: TLS wiring + render guards
+set:
+  database.url: postgres://u:p@h:5432/db?sslmode=require
+tests:
+  - it: rejects tls.enabled without a secretName (values.schema.json guard)
+    template: templates/control.yaml
+    set:
+      tls.enabled: true
+    asserts:
+      # The schema's if/then (enabled ⇒ secretName minLength 1) fires before the
+      # template's own fail guard — either way, this configuration cannot render.
+      - failedTemplate: {}
+
+  - it: fails render when a SPIFFE allowlist is set without mTLS (clientCAKey)
+    template: templates/control.yaml
+    set:
+      tls.enabled: true
+      tls.secretName: cv-tls
+      tls.clientCAKey: ""
+      tls.apiSpiffeIDs: ["spiffe://ex.org/a"]
+    asserts:
+      - failedTemplate:
+          errorMessage: "a SPIFFE authz allowlist (tls.apiSpiffeIDs / tls.workerSpiffeIDs / tls.meshSpiffeIDs) requires mTLS — set tls.clientCAKey to the client-CA key in the Secret"
+
+  - it: control pod gets the API allowlist, NOT the worker/mesh ones (per-audience split)
+    template: templates/control.yaml
+    documentIndex: 0
+    set:
+      tls.enabled: true
+      tls.secretName: cv-tls
+      tls.apiSpiffeIDs: ["spiffe://ex.org/a"]
+      tls.workerSpiffeIDs: ["spiffe://ex.org/w"]
+      tls.meshSpiffeIDs: ["spiffe://ex.org/b"]
+    asserts:
+      - equal:
+          path: spec.template.spec.containers[0].env[?(@.name=="API_AUTHZ_SPIFFE_IDS")].value
+          value: "spiffe://ex.org/a"
+      # A control pod runs no worker/mesh listener, so it must NOT carry their allowlists.
+      - notExists:
+          path: spec.template.spec.containers[0].env[?(@.name=="WORKER_AUTHZ_SPIFFE_IDS")]
+      - notExists:
+          path: spec.template.spec.containers[0].env[?(@.name=="MESH_AUTHZ_SPIFFE_IDS")]
+
+  - it: broker pod gets the worker+mesh allowlists, NOT the API one (per-audience split)
+    template: templates/broker.yaml
+    documentIndex: 0
+    set:
+      tls.enabled: true
+      tls.secretName: cv-tls
+      tls.apiSpiffeIDs: ["spiffe://ex.org/a"]
+      tls.workerSpiffeIDs: ["spiffe://ex.org/w"]
+      tls.meshSpiffeIDs: ["spiffe://ex.org/b"]
+    asserts:
+      - equal:
+          path: spec.template.spec.containers[0].env[?(@.name=="WORKER_AUTHZ_SPIFFE_IDS")].value
+          value: "spiffe://ex.org/w"
+      - equal:
+          path: spec.template.spec.containers[0].env[?(@.name=="MESH_AUTHZ_SPIFFE_IDS")].value
+          value: "spiffe://ex.org/b"
+      - notExists:
+          path: spec.template.spec.containers[0].env[?(@.name=="API_AUTHZ_SPIFFE_IDS")]
+
+  - it: stdworker uses its OWN client TLS Secret, not the server keypair
+    template: templates/stdworker.yaml
+    documentIndex: 0
+    set:
+      stdWorker.enabled: true
+      tls.enabled: true
+      tls.secretName: cv-tls
+      stdWorker.tls.secretName: cv-worker-tls
+    asserts:
+      - equal:
+          path: spec.template.spec.volumes[?(@.name=="tls")].secret.secretName
+          value: cv-worker-tls
+      - equal:
+          path: spec.template.spec.containers[0].env[?(@.name=="BROKER_ADDR")].value
+          value: "https://RELEASE-NAME-converge-broker:9090"
+
+  - it: server cert Secret mounts with defaultMode 0400
+    template: templates/control.yaml
+    documentIndex: 0
+    set:
+      tls.enabled: true
+      tls.secretName: cv-tls
+    asserts:
+      - equal:
+          path: spec.template.spec.volumes[?(@.name=="tls")].secret.defaultMode
+          value: 256

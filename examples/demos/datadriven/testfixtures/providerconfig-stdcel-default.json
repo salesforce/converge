@@ -1,0 +1,44 @@
+{
+  "name": "stdcel",
+  "kind": "stdcel",
+  "kind_version": 1,
+  "is_default": true,
+  "spec": {
+    "resources": [
+      {
+        "id": "vpc",
+        "template": {
+          "kind": "fakevpc",
+          "kind_version": 1,
+          "name": "kro-${schema.spec.fd}-${schema.spec.team}-vpc",
+          "spec": {
+            "account_id": "${schema.spec.account}"
+          }
+        }
+      },
+      {
+        "id": "db",
+        "template": {
+          "kind": "fakedb",
+          "kind_version": 1,
+          "name": "kro-${schema.spec.fd}-${schema.spec.team}-db",
+          "spec": {
+            "account_id": "${schema.spec.account}"
+          }
+        }
+      },
+      {
+        "id": "app",
+        "template": {
+          "kind": "fakeapp",
+          "kind_version": 1,
+          "name": "kro-${schema.spec.fd}-${schema.spec.team}-app",
+          "spec": {
+            "vpc_id": "${vpc.status.vpc_id}",
+            "db_endpoint": "${db.status.db_endpoint}"
+          }
+        }
+      }
+    ]
+  }
+}

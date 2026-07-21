@@ -1,0 +1,43 @@
+{
+  "kind": "fakeapp",
+  "kind_version": 1,
+  "max_transient_attempts": 20,
+  "description": "fakeapp/v1 — Simulation leaf that CONSUMES values flowed from TWO upstreams: the downstream half of the dependency + value-flow demo (producers = fakevpc + fakedb). A composer emits it with spec.vpc_id + spec.db_endpoint ABSENT plus two DepEdges, each carrying a ValueFlow; the engine schedules it only after BOTH upstreams are Ready and fills both fields from their statuses first. Its worker fails (terminal) if EITHER is still empty \u2014 so a Ready fakeapp proves both edges gated it AND both values flowed.",
+  "spec_schema": {
+    "type": "object",
+    "additionalProperties": true,
+    "properties": {
+      "vpc_id": {
+        "type": "string",
+        "description": "Upstream VPC id; flowed in from a fakevpc's status by a composer ValueFlow (absent on compose, filled before scheduling)."
+      },
+      "db_endpoint": {
+        "type": "string",
+        "description": "Upstream DB endpoint; flowed in from a fakedb's status by a composer ValueFlow (absent on compose, filled before scheduling)."
+      }
+    }
+  },
+  "status_schema": {
+    "type": "object",
+    "additionalProperties": true,
+    "properties": {
+      "wired_to": {
+        "type": "string",
+        "description": "The vpc_id the app was wired to \u2014 proves the fakevpc flow delivered."
+      },
+      "db": {
+        "type": "string",
+        "description": "The db_endpoint the app was wired to \u2014 proves the fakedb flow delivered."
+      }
+    }
+  },
+  "reactions": [
+    {
+      "name": "work",
+      "trigger": "specChange",
+      "emits": [
+        "status"
+      ]
+    }
+  ]
+}

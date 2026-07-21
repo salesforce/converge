@@ -1,0 +1,4 @@
+# Ownership scope for every manifest at or below this directory. `conctl sync`
+# stamps each resource here with the label converge.sh/app=web and, on --prune,
+# deletes the web-owned resources that these files no longer declare.
+app: web

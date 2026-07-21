@@ -1,0 +1,319 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<link rel="icon" type="image/svg+xml" href="assets/favicon.svg">
+<title>Converge — Features</title>
+<style>
+  :root {
+    --bg: #eef1f7;
+    --bg-glow: #ffffff;
+    --card: #ffffff;
+    --card-border: #e2e6ef;
+    --text: #1a2233;
+    --muted: #5d6a82;
+    --accent: #2563eb;
+    --accent-2: #3b82f6;
+    --good: #0f9d58;
+    --arrow: #b6c0d4;
+  }
+
+  * { margin: 0; padding: 0; box-sizing: border-box; }
+
+  html, body { min-height: 100%; }
+
+  body {
+    font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Inter, Roboto, sans-serif;
+    background: radial-gradient(ellipse 120% 80% at 50% -10%, var(--bg-glow), var(--bg) 65%);
+    color: var(--text);
+    min-height: 100vh;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    padding: 4vh 5vw;
+    -webkit-font-smoothing: antialiased;
+  }
+
+  .slide {
+    width: 100%;
+    max-width: 1100px;
+    min-height: min(90vh, 640px);
+    background: linear-gradient(165deg, #ffffff, #f7f9fd);
+    border: 1px solid var(--card-border);
+    border-radius: 24px;
+    padding: clamp(1.6rem, 4%, 3rem);
+    display: flex;
+    flex-direction: column;
+    box-shadow: 0 30px 80px rgba(40, 60, 110, 0.12), 0 2px 6px rgba(40, 60, 110, 0.06);
+    position: relative;
+    overflow: hidden;
+  }
+
+  .slide::before {
+    content: "";
+    position: absolute;
+    top: -25%; right: -8%;
+    width: 45%; height: 70%;
+    background: radial-gradient(circle, rgba(59,130,246,0.10), transparent 70%);
+    filter: blur(40px);
+    pointer-events: none;
+  }
+
+  header { margin-bottom: 1.6rem; position: relative; }
+
+  .titlebar {
+    display: flex;
+    align-items: center;
+    gap: clamp(0.7rem, 1.5vw, 1rem);
+  }
+  .brand {
+    flex-shrink: 0;
+    width: clamp(2.4rem, 5vw, 3.4rem);
+    height: clamp(2.4rem, 5vw, 3.4rem);
+    border-radius: clamp(0.7rem, 1.4vw, 1rem);
+    background: linear-gradient(135deg, var(--accent), var(--accent-2));
+    color: #fff;
+    display: grid;
+    place-items: center;
+    font-weight: 800;
+    font-size: clamp(1.3rem, 2.8vw, 2rem);
+    letter-spacing: -0.02em;
+    box-shadow: 0 6px 18px rgba(37, 99, 235, 0.28);
+  }
+
+  .eyebrow {
+    font-size: clamp(0.7rem, 1.1vw, 0.85rem);
+    letter-spacing: 0.22em;
+    text-transform: uppercase;
+    color: var(--accent);
+    font-weight: 700;
+    margin-bottom: 0.6em;
+  }
+
+  h1 {
+    font-size: clamp(1.7rem, 3.6vw, 2.9rem);
+    font-weight: 800;
+    letter-spacing: -0.02em;
+    line-height: 1.05;
+    background: linear-gradient(100deg, #1a2233 30%, var(--accent) 130%);
+    -webkit-background-clip: text;
+    background-clip: text;
+    -webkit-text-fill-color: transparent;
+  }
+
+  .subtitle {
+    color: var(--muted);
+    font-size: clamp(0.85rem, 1.5vw, 1.05rem);
+    margin-top: 0.7em;
+    font-weight: 400;
+  }
+
+  .features {
+    display: grid;
+    grid-template-columns: repeat(2, 1fr);
+    gap: clamp(0.7rem, 1.6vw, 1.1rem);
+    margin: 1.4rem 0 1.6rem;
+    flex: 1;
+  }
+
+  .group {
+    background: var(--card);
+    border: 1px solid var(--card-border);
+    border-radius: 14px;
+    padding: clamp(0.9rem, 2vh, 1.25rem) clamp(1rem, 2vw, 1.4rem);
+    transition: transform 0.18s ease, border-color 0.18s ease, box-shadow 0.18s ease;
+  }
+  .group:hover {
+    transform: translateY(-2px);
+    border-color: rgba(37,99,235,0.35);
+    box-shadow: 0 8px 22px rgba(40,60,110,0.10);
+  }
+
+  .group-title {
+    display: flex;
+    align-items: center;
+    gap: 0.55rem;
+    font-size: clamp(0.82rem, 1.5vw, 1.02rem);
+    font-weight: 700;
+    color: var(--text);
+    margin-bottom: 0.7rem;
+  }
+  .group-title .ico {
+    width: 1.75em; height: 1.75em;
+    border-radius: 8px;
+    background: linear-gradient(135deg, rgba(37,99,235,0.14), rgba(59,130,246,0.14));
+    display: grid;
+    place-items: center;
+    font-size: 0.95em;
+    flex-shrink: 0;
+  }
+
+  .group ul {
+    list-style: none;
+    display: flex;
+    flex-direction: column;
+    gap: 0.4rem;
+  }
+  .group li {
+    position: relative;
+    padding-left: 1.1em;
+    color: var(--muted);
+    font-size: clamp(0.74rem, 1.35vw, 0.93rem);
+    line-height: 1.32;
+  }
+  .group li::before {
+    content: "";
+    position: absolute;
+    left: 0; top: 0.5em;
+    width: 0.42em; height: 0.42em;
+    border-radius: 50%;
+    background: linear-gradient(135deg, var(--accent), var(--accent-2));
+  }
+  .group li strong { color: var(--text); font-weight: 600; }
+
+  footer {
+    margin-top: 1.4rem;
+    padding-top: 1rem;
+    border-top: 1px solid var(--card-border);
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    gap: 1rem;
+    flex-wrap: wrap;
+  }
+  .byline {
+    display: flex;
+    align-items: center;
+    gap: 0.65rem;
+    font-size: clamp(0.8rem, 1.4vw, 0.98rem);
+  }
+  .avatar {
+    width: 2.1em; height: 2.1em;
+    border-radius: 50%;
+    background: linear-gradient(135deg, var(--accent), var(--accent-2));
+    color: #fff;
+    display: grid;
+    place-items: center;
+    font-weight: 700;
+    font-size: 0.85em;
+    letter-spacing: 0.02em;
+  }
+  .byline .name { font-weight: 700; color: var(--text); }
+  .byline .role { color: var(--muted); font-size: 0.9em; }
+  .footer-tag {
+    color: var(--muted);
+    font-size: clamp(0.72rem, 1.2vw, 0.85rem);
+    letter-spacing: 0.04em;
+  }
+
+  @media (max-width: 720px) {
+    .features { grid-template-columns: 1fr; }
+  }
+</style>
+</head>
+<body>
+  <main class="slide">
+    <header>
+      <div class="eyebrow">Platform Modernization</div>
+      <div class="titlebar">
+        <div class="brand" aria-hidden="true">C</div>
+        <h1>Converge at a Glance</h1>
+      </div>
+      <p class="subtitle">A declarative, Kubernetes-style control plane — built for scale and simplicity.</p>
+    </header>
+
+    <div class="features">
+      <section class="group">
+        <div class="group-title"><span class="ico">⎈</span>Declarative resource model</div>
+        <ul>
+          <li>Declarative, <strong>K8s-like resources</strong> with schema-validated specs</li>
+          <li><strong>JSON-Schema-typed kinds</strong> — a kind's spec, status &amp; config are JSON Schema in its manifest; the core validates every apply against it and publishes it at <span style="font-family:ui-monospace,monospace">/docs</span> (OpenAPI). Generate matching <strong>Go &amp; TypeScript</strong> types from the same schema — one source of truth, no drift</li>
+          <li><strong>Two-axis status</strong> — Synced (reconciled the spec) &amp; Ready (healthy now) collapse into one <strong>phase</strong>: Ready, Degraded, Failed, Reconciling, Orphaned, Quarantined, Deleting</li>
+          <li><strong>Resync / drift engine</strong> — re-probes live health out-of-band; a drifted resource flips Ready=False and re-reconciles</li>
+          <li><strong>Versioned specs</strong> — the last N spec revisions are kept per resource; roll back to any earlier one</li>
+          <li>Opaque labels with indexed search</li>
+        </ul>
+      </section>
+
+      <section class="group">
+        <div class="group-title"><span class="ico">🔗</span>Composition &amp; dependencies</div>
+        <ul>
+          <li>A resource <strong>composes</strong> a whole child graph; logic is pluggable — <strong>Go, CEL rules, a kro-style CEL resource graph, Starlark, or any external program</strong> (logic-as-data, edited live, no redeploy)</li>
+          <li>First-class dependency edges with <strong>value flows</strong> — an upstream's output (id, ARN, URL) flows into a dependent's spec; the engine gates until it's ready</li>
+          <li>Child readiness <strong>rolls up</strong> into the root's status — green only when every child is healthy, and it names the one that degraded it</li>
+          <li>Imperative <strong>operations / verbs</strong> beyond reconcile</li>
+        </ul>
+      </section>
+
+      <section class="group">
+        <div class="group-title"><span class="ico">🏛</span>Simple, agnostic architecture</div>
+        <ul>
+          <li>One binary + Postgres — <strong>no etcd, Redis, Kafka, or message broker</strong>; SQL &amp; PL/pgSQL first</li>
+          <li><strong>Kind-blind core</strong>: the engine knows no provider — a <strong>kind is a CRD applied to the DB</strong>; handler code lives only in a worker</li>
+          <li>Workers do <strong>anything</strong> — Terraform, a shell script, a Kubernetes Job, any cloud/API call — behind a language-agnostic <strong>Connect</strong> contract</li>
+          <li>Autodiscovery + membership-driven <strong>auto-sharding</strong>, no leader; control &amp; workers colocated or split</li>
+        </ul>
+      </section>
+
+      <section class="group">
+        <div class="group-title"><span class="ico">🧩</span>Language-free kinds &amp; reactors</div>
+        <ul>
+          <li><strong>No Go required</strong> — the <strong>stdio</strong> provider makes <em>any external program</em> (bash, Python, any binary) a worker over a stdin/stdout JSON protocol</li>
+          <li><strong>Composers as data</strong> too — a kro-style CEL resource graph or a Starlark program, shipped in a config bundle and edited live, no redeploy</li>
+          <li>Built-in providers: <strong>stdio, stdshell, stdterraform, stdcel, stdstarlark</strong></li>
+          <li><strong>Reactors</strong> — durable side effects on a transition ("after X, do Y"): an editable subscription wires them; an emergent saga, no saga type</li>
+        </ul>
+      </section>
+
+      <section class="group">
+        <div class="group-title"><span class="ico">🎛</span>Live operability &amp; lifecycle</div>
+        <ul>
+          <li><strong>Web-API-style kind versioning</strong> — <span style="font-family:ui-monospace,monospace">vpc/v1</span> → <span style="font-family:ui-monospace,monospace">vpc/v2</span>; the broker routes by exact <strong>(kind, version)</strong>, migration is a uuid-stable in-place flip, a version can be retired</li>
+          <li><strong>Per-kind global concurrency caps</strong> — throttle a kind cluster-wide (e.g. respect a cloud API rate)</li>
+          <li><strong>Runtime-editable config</strong> — change a kind's config or CRD live; workers pick it up with no redeploy</li>
+          <li><strong>Soft-delete + reverse-dependency cascade</strong> — finalizers, ordered teardown, orphan-grace pruning, operator quarantine</li>
+        </ul>
+      </section>
+
+      <section class="group">
+        <div class="group-title"><span class="ico">📊</span>Visibility &amp; resilience</div>
+        <ul>
+          <li>Rich embedded UI: topology viewer, dependency graph, cluster/fleet view, resource events</li>
+          <li><strong>Powerful label search</strong>; CQRS — UI &amp; read queries target a <strong>read replica</strong></li>
+          <li><strong>At-least-once, idempotent</strong> — work is redelivered safely; a poison task dead-letters, transient failures retry with backoff</li>
+          <li><strong>Reactive, not polled</strong> — work is pushed, so changes propagate immediately</li>
+        </ul>
+      </section>
+
+      <section class="group">
+        <div class="group-title"><span class="ico">⚡</span>Performance &amp; scale</div>
+        <ul>
+          <li><strong>&gt;4,000 reconciliations/sec</strong> (provider time excluded)</li>
+          <li>Tuned for <strong>10M+ resources</strong> on one Postgres primary</li>
+        </ul>
+      </section>
+
+      <section class="group">
+        <div class="group-title"><span class="ico">🧪</span>Testability</div>
+        <ul>
+          <li>End-to-end testable <strong>in parallel</strong>, with chaos / HA / replica suites</li>
+          <li>Real resources &amp; policies via <strong>AWS LocalStack</strong></li>
+          <li><strong>No mocks</strong> — the real Connect binaries and a Postgres testcontainer</li>
+        </ul>
+      </section>
+    </div>
+
+    <footer>
+      <div class="byline">
+        <div class="avatar">C</div>
+        <div>
+          <div class="name">Converge</div>
+          <div class="role">A declarative orchestration engine</div>
+        </div>
+      </div>
+      <div class="footer-tag">Postgres-backed · single binary · provider-agnostic</div>
+    </footer>
+  </main>
+</body>
+</html>

@@ -1,0 +1,532 @@
+syntax = "proto3";
+
+// Package converge.worker.v1 is the PUBLIC worker↔broker work-distribution API —
+// the SINGLE cross-language contract every worker SDK (Go, and future TypeScript /
+// Java / … bindings) wraps. It is the ONLY tissue that connects a worker in ANY
+// language to a broker: an SDK generates these stubs and speaks exactly this
+// service. It is deliberately SEPARATE from the internal broker↔broker mesh
+// (converge.mesh.v1, generated into internal/meshpb) so the mesh can evolve —
+// new frames, new routing RPCs — WITHOUT regenerating or breaking this public
+// contract that N language SDKs depend on. The dependency is one-way: the mesh
+// proto IMPORTS this one (a forwarded task reuses StageTask/StageComplete/Interest
+// byte-for-byte); this proto never references the mesh.
+//
+// All workers — in-process and remote — are DUMB Connect clients of a BROKER.
+// A broker owns a contiguous tile of the work_queue shard space (assigned by
+// the same Resharder that tiles workers today, retargeted to the "broker"
+// role), runs the FOR UPDATE SKIP LOCKED claim, and STREAMS individual STAGE
+// TASKS to connected workers. The worker holds NO shard, NO DB handle, NO
+// worker_id: it runs the PURE provider stage (compose / work / rollup / delete /
+// operate) and returns its result. The broker is the lease-holder and does ALL
+// the DB reads/writes around every stage (the gate read, ApplyComposeResult,
+// ListDescendants, AppendOutbox, …) under its own worker_id, so the existing
+// fence + at-least-once redelivery are reused unchanged.
+//
+// Wire discipline: the large opaque fields (spec, status, provider_config — a
+// large composer spec can be tens of MB) ride as `bytes` (the stored json.RawMessage, NO
+// re-marshal). The structured stage inputs/outputs (desired children, edges,
+// configs, the rollup subtree) ride as JSON-encoded `bytes` blobs — the accepted
+// cost of remoting every stage. UUIDs ride as their 16 raw bytes.
+package converge.worker.v1;
+
+// The SDK OWNS its wire stubs (sdk-go/workerpb), mirroring the TypeScript SDK's
+// sdk-ts/gen — every language binding generates the worker contract into its own tree.
+// External worker repos import it via the Go SDK. The mesh contract lives apart in
+// internal/meshpb.
+option go_package = "github.com/salesforce/converge/sdk-go/workerpb;workerpb";
+
+// Stage selects WHICH provider stage a StageTask carries. The worker runs the
+// matching pure pipeline (RunComposeStages / RunWorkStages / …) and returns the
+// matching result in StageComplete.
+enum Stage {
+  STAGE_UNSPECIFIED = 0;
+  STAGE_COMPOSE     = 1; // RunCompose → desired children/edges/configs
+  STAGE_WORK        = 2; // RunWork → status (the leaf provisioning stage)
+  STAGE_ROLLUP      = 3; // RunRollup → rolled-up status (input: the subtree)
+  STAGE_DELETE      = 4; // RunDelete → ok (finalizer teardown)
+  STAGE_OPERATE     = 5; // RunOperate → verb output
+  STAGE_REACT       = 6; // RunReact → side effect on a lifecycle transition
+                         // (status-only, like WORK); the broker acks
+                         // lifecycle_outbox after a successful Complete.
+}
+
+// Transition is the resource lifecycle edge a reactor delivery fired on — the
+// wire form of converge.Transition. It is a CLOSED set (mirrors the DB CHECK on
+// reactor_bindings.transition / lifecycle_outbox.transition), so it rides as an
+// enum, not a loose string: an out-of-set value can't cross the wire.
+enum Transition {
+  TRANSITION_UNSPECIFIED = 0;
+  TRANSITION_CREATED     = 1;
+  TRANSITION_SYNCED      = 2;
+  TRANSITION_DEGRADED    = 3;
+  TRANSITION_FAILED      = 4;
+  TRANSITION_DELETED     = 5;
+}
+
+// WorkerService is the WORKER-FACING surface a broker pod serves. It is the ONLY
+// service a worker dials — the worker SDK's Transport speaks exactly these two
+// RPCs, so a worker structurally cannot reach the broker↔broker mesh
+// (converge.mesh.v1.MeshService, internal).
+service WorkerService {
+  // WorkStream is the worker↔broker work channel — a BIDIRECTIONAL stream. A worker
+  // opens it ONCE, sends a Subscribe client message advertising the kinds it can
+  // execute (and, on a reconnect, its still-live in-flight tasks), and thereafter:
+  //   - RECEIVES WorkStreamServerMsgs (a claimed STAGE TASK to run, or a live CONFIG/
+  //     BUNDLE update pushed when an operator edits a kind's default), and
+  //   - SENDS a StageComplete (a finished stage's result), an Interest (readiness),
+  //     or a WorkHeartbeat (per-task liveness) back UP THE SAME STREAM.
+  //
+  // A StageComplete is fenced on the epoch it carries, so ANY broker can write it —
+  // the worker's own broker, a broker it reconnects to after a rollout, or a peer
+  // that ran a forwarded task. The completion still rides the stream (not a unary
+  // RPC) so it reaches a live broker directly rather than being LB-misrouted to one
+  // that would have to relay it; but correctness no longer depends on it landing on
+  // the ORIGINAL claimer — the durable (claim_epoch, generation, manifest_version)
+  // fence makes the write owner-independent. A worker that reconnects to a different
+  // broker redelivers its buffered results there and they land unchanged.
+  rpc WorkStream(stream WorkStreamClientMsg) returns (stream WorkStreamServerMsg);
+
+  // GetProviderConfig returns the CURRENT default providerconfig document for
+  // each requested kind (the doc named after the kind, or empty if none). The
+  // broker serves it live from its ProviderConfigCache, so a dumb worker — which has NO
+  // database — primes each kind's default config at startup and refreshes it
+  // periodically (the PULL half; the broker also PUSHES changes). The per-resource
+  // CUSTOM override still rides in each StageTask; the worker merges
+  // default ⊕ override itself (converge.EffectiveConfig).
+  rpc GetProviderConfig(GetProviderConfigRequest) returns (GetProviderConfigResponse);
+}
+
+// ═══════════════════════════════════════════════════════════════════════════
+// WorkStream messages — worker↔broker session frames.
+// ═══════════════════════════════════════════════════════════════════════════
+
+// WorkStreamClientMsg is one message a WORKER sends UP the WorkStream. The FIRST
+// message MUST be a Subscribe (it advertises the kinds + concurrency, opening the
+// session, and on a RECONNECT re-advertises the worker's still-live in-flight tasks
+// so the new broker adopts their liveness). Subsequent messages are a StageComplete
+// (a finished stage's result), an Interest (a per-kind readiness flip), or a
+// WorkHeartbeat (per-task liveness attestation). Carrying the completion on the
+// stream — not a separate unary RPC — pins it to a broker that can fence it (immune
+// to LB misrouting; see WorkStream).
+//
+// LIVENESS is worker-ATTESTED, not inferred from the connection: the stream being
+// open proves the PROCESS is alive, but NOT that a given task's handler is making
+// progress (it can wedge on a live TCP connection). The worker periodically sends a
+// WorkHeartbeat listing exactly the tasks whose handlers are progressing; the broker
+// refreshes work_queue.heartbeat_at only for those, so a silent or hung task falls
+// out of the attested set and the reaper reclaims it. Interest is the separate axis
+// for per-kind readiness ("stop sending me THIS (kind, kind_version)'s work" without
+// dropping the stream; see Interest, has_worker=false = RS-).
+message WorkStreamClientMsg {
+  oneof body {
+    Subscribe     subscribe = 1; // FIRST message: open the session (kinds + max_inflight + resumed tasks)
+    StageComplete complete  = 2; // a finished stage's result → resolves the lease
+    Interest      interest  = 3; // per-kind readiness flip (has_worker: RS+/RS-); see Interest
+    WorkHeartbeat heartbeat = 4; // per-task liveness attestation (progressing lease_tokens)
+  }
+}
+
+// Subscribe is the opening message of a WorkStream: it advertises what the worker
+// can run and its concurrency, so the broker marks it a live consumer and sizes
+// its per-kind fanout buffer headroom.
+message Subscribe {
+  // A worker does not report its own identity: the broker derives the connected
+  // client's identity from the connection it OBSERVES (the mTLS client cert's SPIFFE
+  // ID, a trusted service-mesh header, or the peer IP) for the connected-worker
+  // cluster view + the "running on <worker>" attribution.
+  //
+  // kinds this worker can execute (the (kind, version) pairs of its registered providers).
+  repeated string kinds = 1;
+  // worker's local concurrency ceiling; sizes per-kind buffer headroom.
+  uint32 max_inflight = 2;
+  // kind_versions is the PARALLEL per-kind web-API version array: kinds[i] is served
+  // at kind_version kind_versions[i] (v1, v2 — integers, no minor/micro). A worker serving
+  // vpc/v1 AND vpc/v2 sends kinds=["vpc","vpc"], kind_versions=[1,2]. Routing is
+  // STRICT exact (kind, kind_version): a worker serves ONLY the exact kind versions it lists —
+  // there is no "any"/wildcard kind_version. A SHORTER kind_versions than kinds defaults its
+  // missing entries to kind_version 1 (v1).
+  repeated int32 kind_versions = 3;
+  // resumed carries the worker's STILL-LIVE in-flight tasks on a RECONNECT: the
+  // (lease_token, claim_epoch) of every task whose handler is still running or whose
+  // computed result is buffered for redelivery. The broker the worker lands on adopts
+  // their liveness immediately — it starts refreshing work_queue.heartbeat_at for these
+  // epochs (fenced), so a task that migrated from a dead broker to this one stays fresh
+  // and is not reaped out from under the live worker. Empty on a first connect.
+  repeated ResumedTask resumed = 4;
+}
+
+// ResumedTask identifies one in-flight task a reconnecting worker is still executing
+// (or holding a buffered result for), by the same (lease_token, claim_epoch) the
+// StageTask carried. The broker adopts its liveness (epoch-fenced heartbeat) so the
+// migrated task isn't reaped while the worker finishes and redelivers its result.
+message ResumedTask {
+  string lease_token = 1;
+  int64  claim_epoch = 2;
+}
+
+// WorkStreamServerMsg is one message the BROKER sends DOWN the WorkStream: a stage
+// task to run, or a live providerconfig update (spec + bundle together). Exactly one
+// field set. There is no down-direction keepalive: liveness is worker-ATTESTED (the
+// worker sends WorkHeartbeat frames UP), so a dead/silent worker is detected by the
+// ABSENCE of attestation (the reaper reclaims its unrefreshed leases), and a dead
+// broker is detected by the worker's own reconnect loop.
+message WorkStreamServerMsg {
+  oneof body {
+    StageTask            task      = 1; // a claimed pure stage to run → reply with a StageComplete
+    ProviderConfigUpdate config    = 2; // a kind's new default providerconfig (spec + bundle), pushed whole
+  }
+}
+
+// WorkHeartbeat is the worker's per-task liveness attestation. The worker sends ONE
+// coalesced frame per tick (not one per task) listing the lease_tokens of the tasks
+// whose handlers are actively PROGRESSING — a token drops out the instant its handler
+// stops making progress (a wedged handler stops attesting even though its goroutine is
+// alive), which is what makes this attest execution, not mere process/TCP liveness.
+// The broker refreshes work_queue.heartbeat_at only for these tokens (fenced on the
+// echoed claim_epoch), so a silent or hung task is not kept fresh and the reaper
+// reclaims it within one liveness window. The two arrays are positional (lease_token[i]
+// ↔ claim_epoch[i]); an empty frame (no progressing tasks) is valid and refreshes
+// nothing.
+message WorkHeartbeat {
+  repeated string lease_token = 1;
+  repeated int64  claim_epoch = 2;
+}
+
+// ProviderConfigUpdate pushes a kind's CURRENT default providerconfig — the WHOLE
+// thing, spec + bundle together — to a connected worker the instant an operator edits
+// it (the broker's ProviderConfigCache observes providerconfig_changed and broadcasts to every
+// WorkStream advertising that kind). A providerconfig is a MONOLITH of {config spec,
+// opaque data/bundle}; this push carries both, mirroring the pull's ProviderConfigEntry,
+// so the two axes are never observed torn or out of order. The worker applies it into
+// its live ConfigCache, so the next task observes the new config without waiting for the
+// periodic GetProviderConfig poll. Both fields empty = the default was deleted (worker
+// clears it); a present-but-empty half means that half is absent (a config with no
+// bundle sends config, leaves bundle empty).
+message ProviderConfigUpdate {
+  string kind   = 1;
+  int32  kind_version = 2; // web-API version this default is for (v1, v2); unset = 1. A push
+                           // targets ONLY workers serving that exact (kind, kind_version) — a v2
+                           // edit never lands in a v1 worker's cache — and the worker routes it
+                           // into its (kind, kind_version) cache slot by this field.
+  bytes  config = 3; // json.RawMessage config document (spec); empty = absent/deleted
+  bytes  bundle = 4; // providerconfigs.data bundle; empty = absent/deleted
+}
+
+// ═══════════════════════════════════════════════════════════════════════════
+// The pure-stage task/result + structural payloads. A mesh-forwarded task reuses
+// these byte-for-byte (converge.mesh.v1.RouteFrame.task IS a StageTask) by IMPORTING
+// this proto, so there is exactly ONE definition and the worker/mesh surfaces can
+// never drift apart.
+// ═══════════════════════════════════════════════════════════════════════════
+
+// StageTask is one pure provider stage to run. It is a SELF-CONTAINED work
+// reference: it carries everything the broker needs to fence the result WITHOUT
+// re-reading the lease from its own memory, so ANY broker can accept the resulting
+// Complete — the worker's own broker, a broker it reconnects to after a rollout, or
+// a peer that ran a forwarded task. The fence is (claim_epoch, generation,
+// manifest_version); lease_token is the unguessable per-claim handle re-verified
+// against the durable row (anti-spray).
+//
+// The per-stage INPUT is a TYPED proto envelope (not a JSON blob): the structural
+// collections (the rollup subtree, compose children/edges/configs) are real proto
+// messages so the wire never JSON-marshals thousands of objects. Only the OPAQUE
+// provider JSON (a Resource's spec/status, a ChildSpec's spec) stays `bytes` — it
+// is arbitrary user JSON with no fixed schema. Exactly one of the *_req fields is
+// set, matching `stage`.
+message StageTask {
+  // ── Identity + routing ──
+  Stage  stage        = 1;
+  string kind         = 2;
+  int32  kind_version = 3;  // the web-API version (v1, v2) this task was claimed for
+                            // (work_queue.kind_version; unset = 1). STRICT (kind, kind_version)
+                            // routing rides this: the broker only hands a task to a
+                            // worker/peer advertising the EXACT (kind, kind_version). The
+                            // dumb worker doesn't strictly need it (its handler is
+                            // (kind, reaction)-keyed), but the broker carries it for
+                            // routing + zero-worker-for-kind_version observability.
+  bytes  resource_id  = 4;  // uuid (16 raw bytes), for logging/identity
+  int64  generation   = 5;
+  string reaction     = 6;  // the reaction NAME (ReactionDecl.Name) the broker selected
+                            // from the DB manifest. The dumb worker looks its handler up
+                            // by (kind, reaction) — it holds no manifest of its own
+                            // (k8s-CRD model: the CRD is applied to the DB, the worker
+                            // carries only code).
+
+  // ── Fence (self-contained, so ANY broker can write the Complete) ──
+  string lease_token     = 7;  // unguessable per-claim handle; echoed on Complete and
+                               // re-verified against the durable row (anti-spray guard)
+  int64  claim_epoch     = 8;  // the strict monotonic fencing token stamped on this claim
+                               // (work_queue.claim_epoch). The worker echoes it on Complete;
+                               // the result write lands only if the row still bears this
+                               // exact epoch, so a stale/zombie/misrouted result (older
+                               // epoch) no-ops. Owner-independent: any broker holding this
+                               // token writes the fenced result.
+  int64  manifest_version = 9; // the kind_manifest content hash this task was enqueued
+                               // under (work_queue.manifest_version; 0 = pre-manifest).
+                               // Rides the task so the completion is self-fencing on ANY
+                               // broker (the fence checks it without re-reading the lease).
+
+  // ── Per-task Env inputs + deadline ──
+  bytes  provider_config  = 10; // json.RawMessage — the per-task Env.ProviderConfig
+  bytes  provider_bundle  = 11; // the per-task Env.ProviderBundle — the CUSTOM bundle
+                               // override (opaque artifact bytes); empty = use kind default.
+  int64  task_deadline_ms = 12; // kind_config.task_deadline_secs as millis; 0 = none
+
+  // ── Typed per-stage request (exactly one set, matching `stage`) ──
+  ComposeRequest compose_req = 13;
+  WorkRequest    work_req    = 14;
+  RollupRequest  rollup_req  = 15;
+  DeleteRequest  delete_req  = 16;
+  OperateRequest operate_req = 17;
+  ReactRequest   react_req   = 18;
+}
+
+// ── Structural messages mirroring the sdk/framework + sdk/model types. Opaque
+//    provider JSON (spec/status) stays `bytes`; everything else is typed. ──
+
+// Resource mirrors converge.Resource. spec/status are opaque JSON (bytes); the
+// optional pointer/time fields use the proto3 presence (optional) where the Go
+// type is a pointer, and millis-since-epoch (0 = nil) for timestamps.
+message Resource {
+  bytes  id                     = 1;  // uuid
+  string kind                   = 2;
+  string name                   = 3;
+  bytes  owner_id               = 4;  // uuid; empty = nil
+  bytes  root_id                = 5;  // uuid; empty = nil
+  bytes  spec                   = 6;  // json.RawMessage (opaque)
+  bytes  status                 = 7;  // json.RawMessage (opaque)
+  int64  generation             = 8;
+  int64  synced_gen             = 9;
+  bool   is_ready               = 10;
+  repeated string finalizers    = 11;
+  int64  deletion_requested_at_ms = 12; // 0 = nil
+  int64  frozen_until_ms        = 13;    // 0 = nil
+  bool   quarantined            = 14;
+  map<string, string> labels    = 15;
+}
+
+// ResourceRef mirrors model.ResourceRef.
+message ResourceRef {
+  string kind = 1;
+  string name = 2;
+}
+
+// ValueFlow mirrors converge.ValueFlow.
+message ValueFlow {
+  string dependent_field = 1;
+  string source_field    = 2;
+}
+
+// ChildSpec mirrors converge.ChildSpec. Spec is opaque (`any` in Go → bytes).
+message ChildSpec {
+  string kind                = 1;
+  string name                = 2;
+  bytes  spec                = 3;  // JSON-encoded `any` (opaque)
+  map<string, string> labels = 4;
+  // kind_version is the child's web-API version (v1, v2, …). REQUIRED and explicit
+  // (>= 1) — a composer stamps it on every child; ApplyComposeResult rejects a 0. It
+  // MUST ride the wire, else a composer's explicit version would be lost over the
+  // Connect stagewire round-trip and arrive as a rejected 0.
+  int32  kind_version        = 5;
+}
+
+// DepEdge mirrors converge.DepEdge.
+message DepEdge {
+  ResourceRef        from   = 1; // dependent
+  ResourceRef        to     = 2; // dependency
+  repeated ValueFlow values = 3;
+}
+
+// ProviderConfigSpec mirrors converge.ProviderConfigSpec.
+message ProviderConfigSpec {
+  string name         = 1;
+  string kind         = 2;
+  bool   is_default   = 3;
+  bytes  spec         = 4;  // JSON-encoded `any` (opaque)
+  // kind_version is the consumer kind's web-API version (v1, v2, …) this config is
+  // for. REQUIRED and explicit (>= 1) — must ride the wire so a composer-emitted
+  // config's version survives the Connect stagewire round-trip.
+  int32  kind_version = 5;
+}
+
+// Operation mirrors converge.Operation. The resource is addressed by its public
+// uuid (resource_id) + verb only — no internal DB row id reaches the worker.
+message Operation {
+  bytes  resource_id  = 1; // resource uuid (public transport identity)
+  string verb         = 2;
+  bytes  input        = 3; // json.RawMessage (opaque)
+  int32  attempts     = 4;
+  string requested_by = 5;
+}
+
+// ── Per-stage request envelopes (Env is NOT here — it rides as the StageTask
+//    provider_config column + the worker's own logger). ──
+
+message ComposeRequest {
+  Resource                    root     = 1;
+  repeated Resource           observed = 2;
+  repeated ChildSpec          desired  = 3;
+  repeated DepEdge            edges    = 4;
+  repeated ProviderConfigSpec configs  = 5;
+}
+
+message WorkRequest {
+  Resource resource = 1;
+  bytes    status   = 2; // accumulated status (opaque)
+}
+
+message RollupRequest {
+  Resource          root        = 1;
+  repeated Resource descendants = 2; // the WHOLE subtree (typed, not JSON)
+  bytes             status      = 3; // opaque
+}
+
+message DeleteRequest {
+  Resource resource = 1;
+}
+
+message OperateRequest {
+  Resource  resource  = 1;
+  Operation operation = 2;
+}
+
+// ReactRequest is one lifecycle-reactor invocation: a resource that just crossed
+// `transition` (created|synced|degraded|failed|deleted), to run the kind's
+// lifecycle reaction (a side effect — upload status, POST a hook, chain the next
+// resource). It is the WORK stage's analogue for the lifecycle trigger: the
+// result rides back as StageComplete.status + conditions. The reactor's sink
+// config (the matched binding's providerconfig) rides as the StageTask's
+// provider_config, identical to every other stage's Env.ProviderConfig.
+//
+// dedup_token is the stable (resource, transition, generation, binding) key the
+// broker computes; the worker passes it to the handler so an idempotent reactor
+// (keyed on it) makes the at-least-once redelivery a harmless no-op.
+message ReactRequest {
+  Resource   resource    = 1;
+  Transition transition  = 2; // closed enum
+  string     dedup_token = 3;
+}
+
+// Condition is the wire form of converge.Condition — one health/status axis a
+// stage reported. Sent RAW (unfolded); the broker folds them into health_ok +
+// the conditions JSONB, because folding depends on broker-side `advance` state.
+message Condition {
+  string type    = 1; // "Ready" | "Synced" | custom axis
+  string status  = 2; // "True" | "False" | "Unknown"
+  string reason  = 3;
+  string message = 4;
+}
+
+// StageComplete is the worker's result for one stage. On success the result
+// fields are set per `stage` (see below); on failure error_message is non-empty
+// (failed_stage labels which pipeline stage, terminal mirrors
+// converge.Terminal()). The broker maps this back to the matching
+// core result type (model.ComposePipelineResult / model.Outcome) and resumes the parked loop.
+//
+//   COMPOSE → compose (typed: desired/edges/configs/status/conditions)
+//   WORK    → status + conditions
+//   ROLLUP  → status + conditions
+//   DELETE  → (no data; success = no error)
+//   OPERATE → output
+//   REACT   → status + conditions (side effect; the broker acks the outbox)
+message StageComplete {
+  string             lease_token  = 1;
+  Stage              stage        = 2;
+  bytes              status       = 3; // WORK/ROLLUP: final json.RawMessage status
+  repeated Condition conditions   = 4; // WORK/ROLLUP: raw, unfolded
+  ComposeResult      compose      = 5; // COMPOSE: typed result
+  bytes              output       = 6; // OPERATE: verb output json.RawMessage
+  string error_message = 7;
+  int32  failed_stage   = 8;
+  bool   terminal       = 9;
+  int64  claim_epoch    = 10; // the epoch echoed from StageTask; the broker fences the
+                              // result write on it, so a result carrying a stale epoch
+                              // (its claim was reaped/re-issued) no-ops. This is what
+                              // lets ANY broker write the result — it needs no lease
+                              // state of its own, only this token + the durable row.
+}
+
+// ComposeResult is the typed COMPOSE output (mirrors converge.ComposePipelineResult
+// minus the error, which travels in StageComplete.error_message).
+message ComposeResult {
+  repeated ChildSpec          desired    = 1;
+  repeated DepEdge            edges      = 2;
+  repeated ProviderConfigSpec configs    = 3;
+  bytes                       status     = 4; // opaque
+  repeated Condition          conditions = 5;
+}
+
+// Interest is the NATS RS+/RS- analogue, sent on TWO streams for the SAME purpose —
+// "here is who has a live, healthy worker for (kind, kind_version)":
+//
+//   - On the worker→broker WorkStream (WorkStreamClientMsg.interest): a worker flips
+//     its own per-kind READINESS. credit is UNUSED here (0) — a worker advertises
+//     PRESENCE, not slots (its slot budget is Subscribe.max_inflight, and the broker
+//     never trusts a worker's self-reported credit for routing). has_worker=false =
+//     RS- = "this provider is degraded, stop sending me (kind, kind_version) work";
+//     has_worker=true = RS+ = "recovered, resume".
+//   - On the broker↔broker mesh Route stream (converge.mesh.v1.RouteFrame.interest,
+//     which imports THIS message): a broker advertises its CURRENT remaining worker
+//     CREDIT for (kind, kind_version) to peers. credit = Σ over the broker's local
+//     READY worker streams of (max_inflight − local_inflight), floored at 0.
+//     has_worker = "any READY local worker for this pair". The broker maps a worker
+//     RS- to a ready-subscriber decrement, which both closes its local claim gate for
+//     the pair and, via the mesh advertisement, retracts the mesh Interest so peers
+//     stop forwarding that pair here too.
+//
+// It is DEFINED here (with the worker contract) because a worker sends it on the
+// WorkStream; the mesh reuses it by import. credit==0 with has_worker=false is RS-
+// (stop claiming); has_worker=true is RS+. The value is ABSOLUTE (not a delta) so a
+// dropped/reordered frame self-heals on the sender's next edge (idempotent); (kind,
+// kind_version) cardinality is tiny so the absolute cost is negligible. Sent eagerly
+// on every edge (worker connect/drop, task dispatched/completed, a worker readiness
+// flip), COALESCED per (stream, kind, kind_version).
+message Interest {
+  string kind       = 1;
+  int32  credit     = 2; // Route: absolute remaining FREE slots for (kind, kind_version) now (0 = full).
+                         // WorkStream: UNUSED (0) — a worker advertises presence, not credit.
+  bool   has_worker = 3; // RS+/RS-: Route = "any READY local worker for (kind, kind_version)?";
+                         // WorkStream = this worker's READINESS for (kind, kind_version).
+                         // Presence, distinct from credit: has_worker=true, credit=0 means
+                         // "a worker exists but is momentarily full" — peers still claim
+                         // their tile (the gate keys on presence) and buffer-push to it;
+                         // has_worker=false is the true RS- (no ready worker → stop claiming).
+  int32  kind_version      = 4; // the web-API version (v1, v2) this interest is for; unset = 1. STRICT:
+                         // credit/presence is per EXACT (kind, kind_version) — a peer serving vpc/v2
+                         // advertises interest only for (vpc, 2), never a v1 claimer's tile.
+}
+
+// ═══════════════════════════════════════════════════════════════════════════
+// GetProviderConfig config-pull messages (worker-facing).
+// ═══════════════════════════════════════════════════════════════════════════
+
+message GetProviderConfigRequest {
+  repeated string kinds = 1; // kinds whose default config the worker wants
+  // kind_versions is the PARALLEL per-kind web-API version array (mirrors Subscribe):
+  // kinds[i]'s default is wanted at kind_version kind_versions[i]. Defaults are per
+  // (kind, kind_version), so a worker serving vpc/v1 AND vpc/v2 asks kinds=["vpc","vpc"],
+  // kind_versions=[1,2] and gets each kind_version's OWN default. A SHORTER kind_versions
+  // defaults its missing entries to kind_version 1 (v1).
+  repeated int32 kind_versions = 2;
+}
+
+message GetProviderConfigResponse {
+  // entries carries one (kind, kind_version)'s current default config + bundle. Keyed by
+  // (kind, kind_version), NOT kind — defaults are per-kind_version, so a worker asking for both
+  // vpc/v1 and vpc/v2 gets two entries with distinct docs. A (kind, kind_version) with no
+  // default config AND no bundle is omitted (the worker treats it as nil for that
+  // pair). Repeated messages (not two parallel maps keyed by kind) so the (kind,
+  // kind_version) key rides cleanly — a proto map can't key on a composite.
+  repeated ProviderConfigEntry entries = 1;
+}
+
+// ProviderConfigEntry is one (kind, kind_version)'s DEFAULT providerconfig as served by
+// GetProviderConfig: the config document (spec) and the opaque bundle (data). A
+// present-but-empty field means that half is absent for the pair (e.g. a config
+// with no bundle sends config, leaves bundle empty).
+message ProviderConfigEntry {
+  string kind   = 1;
+  int32  kind_version  = 2; // web-API kind_version (v1, v2); unset = 1
+  bytes  config = 3; // json.RawMessage default config document; empty = none
+  bytes  bundle = 4; // providerconfigs.data default bundle; empty = none
+}

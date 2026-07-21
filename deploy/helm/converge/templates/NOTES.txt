@@ -1,0 +1,69 @@
+converge {{ .Chart.AppVersion }} — release {{ .Release.Name }} in namespace {{ .Release.Namespace }}
+
+Tiers deployed:
+{{- if .Values.control.enabled }}
+  • control  ({{ if .Values.control.autoscaling.enabled }}HPA {{ .Values.control.autoscaling.minReplicas }}–{{ .Values.control.autoscaling.maxReplicas }}{{ else }}{{ .Values.control.replicaCount }} replicas{{ end }})  — sweepers + drainer + reaper + HTTP API.
+{{- end }}
+{{- if .Values.broker.enabled }}
+  • broker   ({{ if .Values.broker.autoscaling.enabled }}HPA {{ .Values.broker.autoscaling.minReplicas }}–{{ .Values.broker.autoscaling.maxReplicas }}{{ else }}{{ .Values.broker.replicaCount }} replicas{{ end }})  — claims shard tiles, fans work to workers over Connect.
+{{- end }}
+{{- if .Values.stdWorker.enabled }}
+  • stdworker ({{ if .Values.stdWorker.autoscaling.enabled }}HPA {{ .Values.stdWorker.autoscaling.minReplicas }}–{{ .Values.stdWorker.autoscaling.maxReplicas }}{{ else }}{{ .Values.stdWorker.replicaCount }} replicas{{ end }})  — the shipped generic stdworker (provider code + optional cloud identity).
+{{- else }}
+  • stdworker: DISABLED (default). Deploy your own provider-worker as a separate
+    Deployment pointed at this broker ({{ include "converge.fullname" . }}-broker:{{ .Values.service.broker.port }}),
+    or enable the shipped generic stdworker with --set stdWorker.enabled=true.
+{{- end }}
+
+{{- $scheme := include "converge.scheme" . }}
+The HTTP API (control tier):
+  in-cluster:  {{ $scheme }}://{{ include "converge.fullname" . }}.{{ .Release.Namespace }}.svc.cluster.local:{{ .Values.service.api.port }}
+{{- if .Values.ingress.enabled }}
+  ingress:
+    {{- range .Values.ingress.hosts }}
+    http{{ if $.Values.ingress.tls }}s{{ end }}://{{ .host }}
+    {{- end }}
+{{- else }}
+  port-forward for a quick look:
+    kubectl -n {{ .Release.Namespace }} port-forward svc/{{ include "converge.fullname" . }} {{ .Values.service.api.port }}:{{ .Values.service.api.port }}
+    open {{ $scheme }}://localhost:{{ .Values.service.api.port }}
+{{- end }}
+
+Workers dial the broker at:
+  {{ $scheme }}://{{ include "converge.fullname" . }}-broker:{{ .Values.service.broker.port }}
+
+{{- if .Values.tls.enabled }}
+
+TLS is ON (control API + broker Connect serve {{ if .Values.tls.clientCAKey }}mTLS{{ else }}TLS{{ end }}
+{{- if .Values.tls.spiffeIDs }} + SPIFFE authz{{ end }}) from Secret "{{ .Values.tls.secretName }}"
+mounted at {{ .Values.tls.mountPath }} (hot-reloaded every {{ .Values.tls.reloadInterval }}).
+{{- if .Values.stdWorker.enabled }}
+The built-in stdworker auto-dials the broker over https:// with that keypair.
+{{- end }}
+A separately-deployed provider worker must dial the broker over TLS — mount the same
+cert Secret ("{{ .Values.tls.secretName }}") into its pod and set:
+   BROKER_ADDR   = https://{{ include "converge.fullname" . }}-broker:{{ .Values.service.broker.port }}
+   TLS_CERT_FILE = {{ .Values.tls.mountPath }}/tls.crt
+   TLS_KEY_FILE  = {{ .Values.tls.mountPath }}/tls.key
+{{- if .Values.tls.clientCAKey }}
+   BROKER_CA_FILE = {{ .Values.tls.mountPath }}/{{ .Values.tls.clientCAKey }}
+{{- end }}
+{{- end }}
+
+{{- if and (not .Values.database.existingSecret.name) (not .Values.database.url) }}
+
+⚠  No database DSN configured (control+broker need a writer DSN). Set one of:
+    --set database.url='postgres://user:pass@writer:5432/orchestrator?sslmode=require'
+    --set database.existingSecret.name=<secret> --set database.existingSecret.key=<key>
+   (For Aurora IAM auth, also --set database.iamAuth=true — the DSN password is then
+    ignored and replaced by a minted token, but the DSN itself is still required.)
+{{- end }}
+{{- if and .Values.stdWorker.enabled (not .Values.serviceAccount.name) }}
+
+ℹ  The stdworker runs as the namespace "default" ServiceAccount (no cloud identity).
+   If it calls a cloud, create a workload-identity ServiceAccount out of band (EKS IRSA /
+   GKE Workload Identity / AKS Workload Identity — see the chart README) and point it at
+   it: --set serviceAccount.name=<sa>
+{{- end }}
+
+Next: apply kind manifests (CRDs) + providerconfigs over the API before submitting resources.

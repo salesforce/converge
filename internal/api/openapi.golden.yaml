@@ -1,0 +1,3957 @@
+components:
+  schemas:
+    AccountSpec:
+      additionalProperties: false
+      properties:
+        email:
+          description: Root-account contact email.
+          type: string
+        team_name:
+          description: Owner team name; appears in tags.
+          minLength: 1
+          type: string
+      required:
+        - team_name
+        - email
+      type: object
+    AccountStatus:
+      additionalProperties: false
+      properties:
+        account_id:
+          description: Provider-issued 12-digit account id.
+          type: string
+      required:
+        - account_id
+      type: object
+    ApplyKindConfigInputBody:
+      additionalProperties: false
+      properties:
+        $schema:
+          description: A URL to the JSON Schema for this object.
+          examples:
+            - https://example.com/schemas/ApplyKindConfigInputBody.json
+          format: uri
+          readOnly: true
+          type: string
+        max_inflight:
+          description: Global in-flight cap across all pods; 0 = uncapped.
+          format: int64
+          minimum: 0
+          type: integer
+        max_transient_attempts:
+          description: Consecutive transient reconcile failures before a task dead-letters (marked terminal); 0 = unbounded (retry forever).
+          format: int64
+          minimum: 0
+          type: integer
+        orphan_grace_seconds:
+          description: Grace window in seconds before a composer-dropped child of this kind is torn down; 0 = prune immediately.
+          format: int64
+          minimum: 0
+          type: integer
+        resync_interval_seconds:
+          description: Drift re-check interval in seconds; 0 = disabled.
+          format: int64
+          minimum: 0
+          type: integer
+        resync_recomposes:
+          description: Whether a resync also re-runs the composer (only meaningful when resync is enabled).
+          type: boolean
+        retired:
+          description: "RETIRE this web-API version: freeze NEW creates/flips onto it (422) while existing resources keep reconciling so they can drain/migrate off. Runtime-editable; effective values (not deltas), so send the current value to preserve it."
+          type: boolean
+        task_deadline_seconds:
+          description: Per-task timeout in seconds; 0 = no deadline.
+          format: int64
+          minimum: 0
+          type: integer
+      required:
+        - max_inflight
+        - task_deadline_seconds
+        - resync_interval_seconds
+        - orphan_grace_seconds
+        - max_transient_attempts
+      type: object
+    ApplyProviderConfigInputBody:
+      additionalProperties: false
+      properties:
+        $schema:
+          description: A URL to the JSON Schema for this object.
+          examples:
+            - https://example.com/schemas/ApplyProviderConfigInputBody.json
+          format: uri
+          readOnly: true
+          type: string
+        data:
+          description: base64-encoded opaque provider bundle (e.g. a zip of Starlark .star files); decoded into the config's data bytes. Max 10 MiB decoded.
+          type: string
+        is_default:
+          description: True = this (kind, version)'s single live-reconfigurable DEFAULT; false = a CUSTOM override referenced via provider_config_ref.
+          type: boolean
+        kind:
+          description: Consumer kind this config parameterises.
+          minLength: 1
+          type: string
+        kind_version:
+          description: Consumer kind web-API version (v1, v2, …; 1–32767). REQUIRED — no implicit v1 default.
+          format: int64
+          maximum: 32767
+          minimum: 1
+          type: integer
+        name:
+          description: Global config name; provider_config_ref resolves by it.
+          minLength: 1
+          type: string
+        spec:
+          description: Config document; shape is the kind's config_schema (GET /api/kinds/{kind}/schema).
+        type:
+          description: Optional self-describing tag; must be "providerconfig" if set. Ignored for routing.
+          enum:
+            - providerconfig
+          type: string
+      required:
+        - name
+        - kind
+        - kind_version
+        - spec
+      type: object
+    ApplyReactorBindingInputBody:
+      additionalProperties: false
+      properties:
+        $schema:
+          description: A URL to the JSON Schema for this object.
+          examples:
+            - https://example.com/schemas/ApplyReactorBindingInputBody.json
+          format: uri
+          readOnly: true
+          type: string
+        enabled:
+          description: Whether the subscription is active. Defaults true.
+          type: boolean
+        label_match:
+          description: "Optional label predicate: {} (or omitted) matches all; else the resource's labels must contain these."
+        name:
+          description: Unique subscription name (operator-chosen; opaque).
+          minLength: 1
+          type: string
+        reactor:
+          description: Reactor kind whose reaction runs when the subscription fires (the broker ships STAGE_REACT to a worker advertising this kind). Must be a registered reactor kind, distinct from the watched kind.
+          minLength: 1
+          type: string
+        reactor_version:
+          description: "Optional: pin the reactor's web-API version (v1, v2, …). 0/omitted resolves the reactor's highest published version at claim time."
+          format: int64
+          minimum: 0
+          type: integer
+        transition:
+          description: Lifecycle transition that fires the subscription.
+          enum:
+            - created
+            - synced
+            - degraded
+            - failed
+            - deleted
+          type: string
+        type:
+          description: Optional self-describing tag; must be "reactorbinding" if set. Ignored for routing.
+          enum:
+            - reactorbinding
+          type: string
+        watch_kind:
+          description: Resource kind to watch.
+          minLength: 1
+          type: string
+        watch_kind_version:
+          description: "Optional: fire only for this web-API version (v1, v2, …) of the watched kind. 0/omitted = all versions."
+          format: int64
+          minimum: 0
+          type: integer
+      required:
+        - name
+        - watch_kind
+        - transition
+        - reactor
+      type: object
+    ApplyResourceManifestInputBody:
+      additionalProperties: false
+      properties:
+        $schema:
+          description: A URL to the JSON Schema for this object.
+          examples:
+            - https://example.com/schemas/ApplyResourceManifestInputBody.json
+          format: uri
+          readOnly: true
+          type: string
+        kind:
+          description: Resource kind.
+          type: string
+        kind_version:
+          description: Web-API version (v1, v2, …; 1–32767). REQUIRED — no implicit v1 default. A change from the resource's current kindVersion is a breaking flip.
+          format: int64
+          maximum: 32767
+          minimum: 1
+          type: integer
+        labels:
+          additionalProperties:
+            type: string
+          description: Full label set (string→string); applied wholesale — omitting a key removes it.
+          type: object
+        name:
+          description: Resource name; identity together with kind.
+          minLength: 1
+          type: string
+        provider_config_ref:
+          description: Name of a providerconfig resource to attach as a per-resource config override.
+          type: string
+        spec:
+          description: Per-kind desired-state spec.
+        type:
+          description: Optional self-describing tag; must be "resource" if set. Ignored for routing.
+          enum:
+            - resource
+          type: string
+      required:
+        - kind
+        - kind_version
+        - name
+        - spec
+      type: object
+    ChangesOutputBody:
+      additionalProperties: false
+      properties:
+        $schema:
+          description: A URL to the JSON Schema for this object.
+          examples:
+            - https://example.com/schemas/ChangesOutputBody.json
+          format: uri
+          readOnly: true
+          type: string
+        owner:
+          $ref: "#/components/schemas/ResourceInfo"
+        resources:
+          items:
+            $ref: "#/components/schemas/ResourceListItem"
+          type:
+            - array
+            - "null"
+      required:
+        - owner
+        - resources
+      type: object
+    ClassicbomSpec:
+      additionalProperties: true
+      properties:
+        deployment_instance:
+          additionalProperties: true
+          properties:
+            functional_domains:
+              items:
+                additionalProperties: true
+                properties:
+                  accounts_only:
+                    type: boolean
+                  aws_transit_gateway:
+                    additionalProperties: true
+                    properties:
+                      enabled:
+                        type: boolean
+                    type: object
+                  name:
+                    minLength: 1
+                    type: string
+                  service_teams:
+                    items:
+                      additionalProperties: true
+                      properties:
+                        name:
+                          minLength: 1
+                          type: string
+                      required:
+                        - name
+                      type: object
+                    type: array
+                required:
+                  - name
+                type: object
+              type: array
+            name:
+              description: Deployment instance name; the prefix for every composed child name.
+              minLength: 1
+              type: string
+          required:
+            - name
+          type: object
+      required:
+        - deployment_instance
+      type: object
+    ClassicbomStatus:
+      additionalProperties: false
+      properties:
+        teams:
+          items: {}
+          type:
+            - array
+            - "null"
+      required:
+        - teams
+      type: object
+    ClusterInfoOutputBody:
+      additionalProperties: false
+      properties:
+        $schema:
+          description: A URL to the JSON Schema for this object.
+          examples:
+            - https://example.com/schemas/ClusterInfoOutputBody.json
+          format: uri
+          readOnly: true
+          type: string
+        members:
+          items:
+            $ref: "#/components/schemas/ClusterMemberInfo"
+          type:
+            - array
+            - "null"
+      required:
+        - members
+      type: object
+    ClusterMemberInfo:
+      additionalProperties: false
+      properties:
+        age_seconds:
+          format: int64
+          type: integer
+        config: {}
+        hostname:
+          type: string
+        in_flight:
+          format: int64
+          type: integer
+        last_heartbeat:
+          format: date-time
+          type:
+            - string
+            - "null"
+        member_id:
+          type: string
+        pid:
+          format: int32
+          type: integer
+        ready:
+          type: boolean
+        role:
+          type: string
+        shards:
+          items:
+            format: int32
+            type: integer
+          type:
+            - array
+            - "null"
+        started_at:
+          format: date-time
+          type:
+            - string
+            - "null"
+        status:
+          type: string
+        uptime:
+          type: string
+        version:
+          type: string
+        workers:
+          items:
+            $ref: "#/components/schemas/ConnectedWorkerInfo"
+          type:
+            - array
+            - "null"
+      required:
+        - member_id
+        - role
+        - shards
+        - config
+        - in_flight
+        - version
+        - hostname
+        - pid
+        - status
+        - ready
+        - age_seconds
+        - uptime
+        - started_at
+        - last_heartbeat
+      type: object
+    ConditionDTO:
+      additionalProperties: false
+      properties:
+        last_transition_at:
+          format: date-time
+          type:
+            - string
+            - "null"
+        message:
+          type: string
+        observed_generation:
+          format: int64
+          type: integer
+        reason:
+          type: string
+        status:
+          type: string
+        type:
+          type: string
+      required:
+        - type
+        - status
+        - observed_generation
+      type: object
+    ConnectedWorkerInfo:
+      additionalProperties: false
+      properties:
+        id_source:
+          type: string
+        id_verified:
+          type: boolean
+        inflight:
+          format: int32
+          type: integer
+        kind_versions:
+          items:
+            format: int64
+            type: integer
+          type:
+            - array
+            - "null"
+        kinds:
+          items:
+            type: string
+          type:
+            - array
+            - "null"
+        max_inflight:
+          format: int32
+          type: integer
+        worker_id:
+          type: string
+      required:
+        - worker_id
+        - kinds
+        - inflight
+        - max_inflight
+      type: object
+    DeleteManifestOutputBody:
+      additionalProperties: false
+      properties:
+        $schema:
+          description: A URL to the JSON Schema for this object.
+          examples:
+            - https://example.com/schemas/DeleteManifestOutputBody.json
+          format: uri
+          readOnly: true
+          type: string
+        deleted_configs:
+          description: Provider configs cascade-deleted with the version.
+          format: int64
+          type: integer
+        kind:
+          type: string
+        kind_version:
+          format: int64
+          type: integer
+      required:
+        - kind
+        - kind_version
+        - deleted_configs
+      type: object
+    DeleteProviderConfigOutputBody:
+      additionalProperties: false
+      properties:
+        $schema:
+          description: A URL to the JSON Schema for this object.
+          examples:
+            - https://example.com/schemas/DeleteProviderConfigOutputBody.json
+          format: uri
+          readOnly: true
+          type: string
+        deleted:
+          type: boolean
+      required:
+        - deleted
+      type: object
+    DeleteReactorBindingOutputBody:
+      additionalProperties: false
+      properties:
+        $schema:
+          description: A URL to the JSON Schema for this object.
+          examples:
+            - https://example.com/schemas/DeleteReactorBindingOutputBody.json
+          format: uri
+          readOnly: true
+          type: string
+        deleted:
+          type: boolean
+      required:
+        - deleted
+      type: object
+    DeleteResourceOutputBody:
+      additionalProperties: false
+      properties:
+        $schema:
+          description: A URL to the JSON Schema for this object.
+          examples:
+            - https://example.com/schemas/DeleteResourceOutputBody.json
+          format: uri
+          readOnly: true
+          type: string
+        deleted:
+          type: boolean
+      required:
+        - deleted
+      type: object
+    ErrorDetail:
+      additionalProperties: false
+      properties:
+        location:
+          description: Where the error occurred, e.g. 'body.items[3].tags' or 'path.thing-id'
+          type: string
+        message:
+          description: Error message text
+          type: string
+        value:
+          description: The value at the given location
+      type: object
+    ErrorModel:
+      additionalProperties: false
+      properties:
+        $schema:
+          description: A URL to the JSON Schema for this object.
+          examples:
+            - https://example.com/schemas/ErrorModel.json
+          format: uri
+          readOnly: true
+          type: string
+        detail:
+          description: A human-readable explanation specific to this occurrence of the problem.
+          examples:
+            - Property foo is required but is missing.
+          type: string
+        errors:
+          description: Optional list of individual error details
+          items:
+            $ref: "#/components/schemas/ErrorDetail"
+          type:
+            - array
+            - "null"
+        instance:
+          description: A URI reference that identifies the specific occurrence of the problem.
+          examples:
+            - https://example.com/error-log/abc123
+          format: uri
+          type: string
+        status:
+          description: HTTP status code
+          examples:
+            - 400
+          format: int64
+          type: integer
+        title:
+          description: A short, human-readable summary of the problem type. This value should not change between occurrences of the error.
+          examples:
+            - Bad Request
+          type: string
+        type:
+          default: about:blank
+          description: A URI reference to human-readable documentation for the error.
+          examples:
+            - https://example.com/errors/example
+          format: uri
+          type: string
+      type: object
+    EventItem:
+      additionalProperties: false
+      properties:
+        actor:
+          type: string
+        created_at:
+          format: date-time
+          type: string
+        detail: {}
+        message:
+          type: string
+        reason:
+          type: string
+        type:
+          type: string
+      required:
+        - type
+        - detail
+        - created_at
+      type: object
+    GraphEdge:
+      additionalProperties: false
+      properties:
+        from:
+          type: string
+        to:
+          type: string
+      required:
+        - from
+        - to
+      type: object
+    GraphNode:
+      additionalProperties: false
+      properties:
+        deletion_requested_at:
+          format: date-time
+          type:
+            - string
+            - "null"
+        is_ready:
+          type: boolean
+        kind:
+          type: string
+        name:
+          type: string
+        ref:
+          type: string
+      required:
+        - ref
+        - kind
+        - name
+        - is_ready
+      type: object
+    GraphOutputBody:
+      additionalProperties: false
+      properties:
+        $schema:
+          description: A URL to the JSON Schema for this object.
+          examples:
+            - https://example.com/schemas/GraphOutputBody.json
+          format: uri
+          readOnly: true
+          type: string
+        edges:
+          items:
+            $ref: "#/components/schemas/GraphEdge"
+          type:
+            - array
+            - "null"
+        nodes:
+          items:
+            $ref: "#/components/schemas/GraphNode"
+          type:
+            - array
+            - "null"
+        owner:
+          $ref: "#/components/schemas/ResourceInfo"
+      required:
+        - owner
+        - nodes
+        - edges
+      type: object
+    InvokeOpInputBody:
+      additionalProperties: false
+      properties:
+        $schema:
+          description: A URL to the JSON Schema for this object.
+          examples:
+            - https://example.com/schemas/InvokeOpInputBody.json
+          format: uri
+          readOnly: true
+          type: string
+        input:
+          description: Verb-specific input.
+        verb:
+          description: Operator verb name (must be a declared verb of the kind).
+          minLength: 1
+          type: string
+      required:
+        - verb
+      type: object
+    KindConfigOutputBody:
+      additionalProperties: false
+      properties:
+        $schema:
+          description: A URL to the JSON Schema for this object.
+          examples:
+            - https://example.com/schemas/KindConfigOutputBody.json
+          format: uri
+          readOnly: true
+          type: string
+        kind:
+          type: string
+        kind_version:
+          format: int64
+          type: integer
+      required:
+        - kind
+        - kind_version
+      type: object
+    KindListEntry:
+      additionalProperties: false
+      properties:
+        operational:
+          $ref: "#/components/schemas/KindOperational"
+      type: object
+    KindOperational:
+      additionalProperties: false
+      properties:
+        max_inflight:
+          description: Global in-flight cap across all pods; 0 = uncapped.
+          format: int64
+          type: integer
+        max_transient_attempts:
+          description: Consecutive transient reconcile failures before a task dead-letters (marked terminal); 0 = unbounded (retry forever).
+          format: int64
+          type: integer
+        orphan_grace_seconds:
+          description: Grace window before a composer-dropped child of this kind is torn down; 0 = prune immediately.
+          format: int64
+          type: integer
+        resync_interval_seconds:
+          description: Drift re-check interval; 0 = disabled.
+          format: int64
+          type: integer
+        resync_recomposes:
+          description: Whether a resync also re-runs the composer.
+          type: boolean
+        retired:
+          description: "Whether this web-API version is RETIRED: new creates/flips onto it are frozen (422) while existing resources drain."
+          type: boolean
+        task_deadline_seconds:
+          description: Per-task timeout; 0 = no deadline.
+          format: int64
+          type: integer
+      required:
+        - max_inflight
+        - task_deadline_seconds
+        - resync_interval_seconds
+        - resync_recomposes
+        - orphan_grace_seconds
+        - max_transient_attempts
+      type: object
+    KindSchemaOutputBody:
+      additionalProperties: false
+      properties:
+        $schema:
+          description: A URL to the JSON Schema for this object.
+          examples:
+            - https://example.com/schemas/KindSchemaOutputBody.json
+          format: uri
+          readOnly: true
+          type: string
+        config_schema: {}
+        config_schema_ref:
+          type: string
+        default_config: {}
+        operational:
+          $ref: "#/components/schemas/KindOperational"
+        spec_schema: {}
+        spec_schema_ref:
+          type: string
+        status_schema: {}
+        status_schema_ref:
+          type: string
+      type: object
+    ListDependenciesOutputBody:
+      additionalProperties: false
+      properties:
+        $schema:
+          description: A URL to the JSON Schema for this object.
+          examples:
+            - https://example.com/schemas/ListDependenciesOutputBody.json
+          format: uri
+          readOnly: true
+          type: string
+        dependencies:
+          items:
+            $ref: "#/components/schemas/UpstreamDep"
+          type:
+            - array
+            - "null"
+      required:
+        - dependencies
+      type: object
+    ListEventsOutputBody:
+      additionalProperties: false
+      properties:
+        $schema:
+          description: A URL to the JSON Schema for this object.
+          examples:
+            - https://example.com/schemas/ListEventsOutputBody.json
+          format: uri
+          readOnly: true
+          type: string
+        events:
+          items:
+            $ref: "#/components/schemas/EventItem"
+          type:
+            - array
+            - "null"
+      required:
+        - events
+      type: object
+    ListKindsOutputBody:
+      additionalProperties: false
+      properties:
+        $schema:
+          description: A URL to the JSON Schema for this object.
+          examples:
+            - https://example.com/schemas/ListKindsOutputBody.json
+          format: uri
+          readOnly: true
+          type: string
+        kinds:
+          items:
+            $ref: "#/components/schemas/KindListEntry"
+          type:
+            - array
+            - "null"
+      required:
+        - kinds
+      type: object
+    ListManifestsOutputBody:
+      additionalProperties: false
+      properties:
+        $schema:
+          description: A URL to the JSON Schema for this object.
+          examples:
+            - https://example.com/schemas/ListManifestsOutputBody.json
+          format: uri
+          readOnly: true
+          type: string
+        manifests:
+          items:
+            $ref: "#/components/schemas/ManifestBody"
+          type:
+            - array
+            - "null"
+      required:
+        - manifests
+      type: object
+    ListOpsOutputBody:
+      additionalProperties: false
+      properties:
+        $schema:
+          description: A URL to the JSON Schema for this object.
+          examples:
+            - https://example.com/schemas/ListOpsOutputBody.json
+          format: uri
+          readOnly: true
+          type: string
+        operations:
+          items:
+            $ref: "#/components/schemas/OperationDTO"
+          type:
+            - array
+            - "null"
+      required:
+        - operations
+      type: object
+    ListProviderConfigsOutputBody:
+      additionalProperties: false
+      properties:
+        $schema:
+          description: A URL to the JSON Schema for this object.
+          examples:
+            - https://example.com/schemas/ListProviderConfigsOutputBody.json
+          format: uri
+          readOnly: true
+          type: string
+        limit:
+          format: int64
+          type: integer
+        offset:
+          format: int64
+          type: integer
+        provider_configs:
+          items:
+            $ref: "#/components/schemas/ProviderConfigBody"
+          type:
+            - array
+            - "null"
+        total:
+          format: int64
+          type: integer
+      required:
+        - provider_configs
+        - total
+        - limit
+        - offset
+      type: object
+    ListReactorBindingsOutputBody:
+      additionalProperties: false
+      properties:
+        $schema:
+          description: A URL to the JSON Schema for this object.
+          examples:
+            - https://example.com/schemas/ListReactorBindingsOutputBody.json
+          format: uri
+          readOnly: true
+          type: string
+        bindings:
+          items:
+            $ref: "#/components/schemas/ReactorBindingBody"
+          type:
+            - array
+            - "null"
+      required:
+        - bindings
+      type: object
+    ListResourcesPageMultiOutputBody:
+      additionalProperties: false
+      properties:
+        $schema:
+          description: A URL to the JSON Schema for this object.
+          examples:
+            - https://example.com/schemas/ListResourcesPageMultiOutputBody.json
+          format: uri
+          readOnly: true
+          type: string
+        owners:
+          items:
+            $ref: "#/components/schemas/ResourceInfo"
+          type:
+            - array
+            - "null"
+        resources:
+          items:
+            $ref: "#/components/schemas/ResourceListItem"
+          type:
+            - array
+            - "null"
+      required:
+        - owners
+        - resources
+      type: object
+    ListResourcesPageOutputBody:
+      additionalProperties: false
+      properties:
+        $schema:
+          description: A URL to the JSON Schema for this object.
+          examples:
+            - https://example.com/schemas/ListResourcesPageOutputBody.json
+          format: uri
+          readOnly: true
+          type: string
+        owner:
+          $ref: "#/components/schemas/ResourceInfo"
+        resources:
+          items:
+            $ref: "#/components/schemas/ResourceListItem"
+          type:
+            - array
+            - "null"
+      required:
+        - owner
+        - resources
+      type: object
+    ListRootsPageOutputBody:
+      additionalProperties: false
+      properties:
+        $schema:
+          description: A URL to the JSON Schema for this object.
+          examples:
+            - https://example.com/schemas/ListRootsPageOutputBody.json
+          format: uri
+          readOnly: true
+          type: string
+        roots:
+          items:
+            $ref: "#/components/schemas/RootPageItem"
+          type:
+            - array
+            - "null"
+      required:
+        - roots
+      type: object
+    ListSpecHistoryOutputBody:
+      additionalProperties: false
+      properties:
+        $schema:
+          description: A URL to the JSON Schema for this object.
+          examples:
+            - https://example.com/schemas/ListSpecHistoryOutputBody.json
+          format: uri
+          readOnly: true
+          type: string
+        revisions:
+          items:
+            $ref: "#/components/schemas/SpecRevisionItem"
+          type:
+            - array
+            - "null"
+      required:
+        - revisions
+      type: object
+    ManifestBody:
+      additionalProperties: false
+      properties:
+        config_schema: {}
+        description:
+          type: string
+        finalizer_name:
+          type: string
+        kind:
+          type: string
+        kind_version:
+          description: Web-API version (v1, v2, …; 1–32767). REQUIRED — no implicit v1 default.
+          format: int64
+          maximum: 32767
+          minimum: 1
+          type: integer
+        max_inflight:
+          format: int64
+          type: integer
+        max_transient_attempts:
+          format: int64
+          type: integer
+        orphan_grace_secs:
+          format: int64
+          type: integer
+        reactions:
+          items:
+            $ref: "#/components/schemas/ReactionDecl"
+          type:
+            - array
+            - "null"
+        resync_interval_secs:
+          format: int64
+          type: integer
+        resync_recomposes:
+          type: boolean
+        retired:
+          type: boolean
+        spec_schema: {}
+        status_schema: {}
+        task_deadline_secs:
+          format: int64
+          type: integer
+      required:
+        - kind
+        - kind_version
+        - reactions
+      type: object
+    ManifestOutputBody:
+      additionalProperties: false
+      properties:
+        $schema:
+          description: A URL to the JSON Schema for this object.
+          examples:
+            - https://example.com/schemas/ManifestOutputBody.json
+          format: uri
+          readOnly: true
+          type: string
+        manifest_version:
+          format: int64
+          type: integer
+      required:
+        - manifest_version
+      type: object
+    OperationDTO:
+      additionalProperties: false
+      properties:
+        $schema:
+          description: A URL to the JSON Schema for this object.
+          examples:
+            - https://example.com/schemas/OperationDTO.json
+          format: uri
+          readOnly: true
+          type: string
+        attempts:
+          format: int32
+          type: integer
+        completed_at:
+          format: date-time
+          type:
+            - string
+            - "null"
+        error_message:
+          type: string
+        input: {}
+        output: {}
+        requested_at:
+          format: date-time
+          type:
+            - string
+            - "null"
+        requested_by:
+          type: string
+        state:
+          type: string
+        uid:
+          type: string
+        verb:
+          type: string
+      required:
+        - uid
+        - verb
+        - state
+        - attempts
+        - requested_at
+      type: object
+    ProviderConfigBody:
+      additionalProperties: false
+      properties:
+        $schema:
+          description: A URL to the JSON Schema for this object.
+          examples:
+            - https://example.com/schemas/ProviderConfigBody.json
+          format: uri
+          readOnly: true
+          type: string
+        created_at:
+          format: date-time
+          type: string
+        data:
+          type: string
+        is_default:
+          type: boolean
+        kind:
+          type: string
+        kind_version:
+          format: int64
+          type: integer
+        name:
+          type: string
+        owner_kind:
+          type: string
+        owner_name:
+          type: string
+        spec: {}
+        updated_at:
+          format: date-time
+          type: string
+      required:
+        - name
+        - kind
+        - kind_version
+        - is_default
+        - created_at
+        - updated_at
+      type: object
+    ProviderConfigRefDTO:
+      additionalProperties: false
+      properties:
+        kind:
+          type: string
+        name:
+          type: string
+      required:
+        - name
+        - kind
+      type: object
+    PutManifestBody:
+      additionalProperties: false
+      properties:
+        $schema:
+          description: A URL to the JSON Schema for this object.
+          examples:
+            - https://example.com/schemas/PutManifestBody.json
+          format: uri
+          readOnly: true
+          type: string
+        config_schema: {}
+        description:
+          type: string
+        finalizer_name:
+          type: string
+        kind:
+          type: string
+        kind_version:
+          description: Web-API version (v1, v2, …; 1–32767). REQUIRED — no implicit v1 default.
+          format: int64
+          maximum: 32767
+          minimum: 1
+          type: integer
+        max_inflight:
+          format: int64
+          type: integer
+        max_transient_attempts:
+          format: int64
+          type: integer
+        orphan_grace_secs:
+          format: int64
+          type: integer
+        reactions:
+          items:
+            $ref: "#/components/schemas/ReactionDecl"
+          type:
+            - array
+            - "null"
+        resync_interval_secs:
+          format: int64
+          type: integer
+        resync_recomposes:
+          type: boolean
+        spec_schema: {}
+        status_schema: {}
+        task_deadline_secs:
+          format: int64
+          type: integer
+        type:
+          description: Optional self-describing tag; must be "manifest" if set. Ignored for routing.
+          enum:
+            - manifest
+          type: string
+      required:
+        - kind
+        - kind_version
+        - reactions
+      type: object
+    QuarantineOutputBody:
+      additionalProperties: false
+      properties:
+        $schema:
+          description: A URL to the JSON Schema for this object.
+          examples:
+            - https://example.com/schemas/QuarantineOutputBody.json
+          format: uri
+          readOnly: true
+          type: string
+        quarantined:
+          type: boolean
+      required:
+        - quarantined
+      type: object
+    ReactionDecl:
+      additionalProperties: false
+      properties:
+        emits:
+          items:
+            type: string
+          type:
+            - array
+            - "null"
+        finalizer:
+          type: string
+        name:
+          type: string
+        trigger:
+          type: string
+        verb:
+          type: string
+      required:
+        - name
+        - trigger
+        - emits
+      type: object
+    ReactorBindingBody:
+      additionalProperties: false
+      properties:
+        $schema:
+          description: A URL to the JSON Schema for this object.
+          examples:
+            - https://example.com/schemas/ReactorBindingBody.json
+          format: uri
+          readOnly: true
+          type: string
+        enabled:
+          type: boolean
+        label_match: {}
+        name:
+          type: string
+        reactor:
+          type: string
+        reactor_version:
+          format: int64
+          type: integer
+        transition:
+          type: string
+        watch_kind:
+          type: string
+        watch_kind_version:
+          format: int64
+          type: integer
+      required:
+        - name
+        - watch_kind
+        - transition
+        - reactor
+        - enabled
+      type: object
+    ReadinessKindCount:
+      additionalProperties: false
+      properties:
+        degraded:
+          format: int64
+          type: integer
+        deleting:
+          format: int64
+          type: integer
+        failed:
+          format: int64
+          type: integer
+        kind:
+          type: string
+        orphaned:
+          format: int64
+          type: integer
+        quarantined:
+          format: int64
+          type: integer
+        ready:
+          format: int64
+          type: integer
+        reconciling:
+          format: int64
+          type: integer
+      required:
+        - kind
+        - ready
+        - reconciling
+        - degraded
+        - failed
+        - deleting
+        - orphaned
+        - quarantined
+      type: object
+    ReadinessTotals:
+      additionalProperties: false
+      properties:
+        degraded:
+          format: int64
+          type: integer
+        deleting:
+          format: int64
+          type: integer
+        failed:
+          format: int64
+          type: integer
+        orphaned:
+          format: int64
+          type: integer
+        quarantined:
+          format: int64
+          type: integer
+        ready:
+          format: int64
+          type: integer
+        reconciling:
+          format: int64
+          type: integer
+      required:
+        - ready
+        - reconciling
+        - degraded
+        - failed
+        - deleting
+        - orphaned
+        - quarantined
+      type: object
+    ReconcileOutputBody:
+      additionalProperties: false
+      properties:
+        $schema:
+          description: A URL to the JSON Schema for this object.
+          examples:
+            - https://example.com/schemas/ReconcileOutputBody.json
+          format: uri
+          readOnly: true
+          type: string
+        status:
+          type: string
+      required:
+        - status
+      type: object
+    ResourceFull:
+      additionalProperties: false
+      properties:
+        $schema:
+          description: A URL to the JSON Schema for this object.
+          examples:
+            - https://example.com/schemas/ResourceFull.json
+          format: uri
+          readOnly: true
+          type: string
+        conditions:
+          items:
+            $ref: "#/components/schemas/ConditionDTO"
+          type:
+            - array
+            - "null"
+        created_at:
+          format: date-time
+          type:
+            - string
+            - "null"
+        deletion_requested_at:
+          format: date-time
+          type:
+            - string
+            - "null"
+        failure_attempts:
+          format: int32
+          type: integer
+        failure_terminal:
+          type: boolean
+        finalizers:
+          items:
+            type: string
+          type:
+            - array
+            - "null"
+        generation:
+          format: int64
+          type: integer
+        health_ok:
+          type: boolean
+        is_ready:
+          type: boolean
+        kind:
+          type: string
+        kind_version:
+          format: int64
+          type: integer
+        labels:
+          additionalProperties:
+            type: string
+          type: object
+        manifest_drift:
+          type: boolean
+        max_transient_attempts:
+          format: int32
+          type: integer
+        name:
+          type: string
+        owner_kind:
+          type: string
+        owner_name:
+          type: string
+        phase:
+          type: string
+        provider_config:
+          $ref: "#/components/schemas/ProviderConfigRefDTO"
+        root_kind:
+          type: string
+        root_name:
+          type: string
+        spec: {}
+        status: {}
+        synced_gen:
+          format: int64
+          type: integer
+        uid:
+          type: string
+        updated_at:
+          format: date-time
+          type:
+            - string
+            - "null"
+        work:
+          $ref: "#/components/schemas/WorkDTO"
+      required:
+        - uid
+        - kind
+        - kind_version
+        - name
+        - generation
+        - synced_gen
+        - is_ready
+        - health_ok
+        - phase
+        - labels
+        - created_at
+        - updated_at
+        - spec
+        - manifest_drift
+        - failure_terminal
+        - failure_attempts
+      type: object
+    ResourceInfo:
+      additionalProperties: false
+      properties:
+        conditions:
+          items:
+            $ref: "#/components/schemas/ConditionDTO"
+          type:
+            - array
+            - "null"
+        created_at:
+          format: date-time
+          type:
+            - string
+            - "null"
+        deletion_requested_at:
+          format: date-time
+          type:
+            - string
+            - "null"
+        finalizers:
+          items:
+            type: string
+          type:
+            - array
+            - "null"
+        generation:
+          format: int64
+          type: integer
+        health_ok:
+          type: boolean
+        is_ready:
+          type: boolean
+        kind:
+          type: string
+        kind_version:
+          format: int64
+          type: integer
+        labels:
+          additionalProperties:
+            type: string
+          type: object
+        name:
+          type: string
+        owner_kind:
+          type: string
+        owner_name:
+          type: string
+        phase:
+          type: string
+        synced_gen:
+          format: int64
+          type: integer
+        updated_at:
+          format: date-time
+          type:
+            - string
+            - "null"
+      required:
+        - kind
+        - name
+        - generation
+        - synced_gen
+        - is_ready
+        - health_ok
+        - phase
+        - labels
+        - created_at
+        - updated_at
+      type: object
+    ResourceListItem:
+      additionalProperties: false
+      properties:
+        created_at:
+          format: date-time
+          type:
+            - string
+            - "null"
+        deletion_requested_at:
+          format: date-time
+          type:
+            - string
+            - "null"
+        generation:
+          format: int64
+          type: integer
+        is_ready:
+          type: boolean
+        kind:
+          type: string
+        kind_version:
+          format: int64
+          type: integer
+        labels:
+          additionalProperties:
+            type: string
+          type: object
+        name:
+          type: string
+        owner_kind:
+          type: string
+        owner_name:
+          type: string
+        phase:
+          type: string
+        synced_gen:
+          format: int64
+          type: integer
+        updated_at:
+          format: date-time
+          type:
+            - string
+            - "null"
+      required:
+        - kind
+        - name
+        - generation
+        - synced_gen
+        - is_ready
+        - phase
+        - labels
+        - created_at
+        - updated_at
+      type: object
+    RollbackInputBody:
+      additionalProperties: false
+      properties:
+        $schema:
+          description: A URL to the JSON Schema for this object.
+          examples:
+            - https://example.com/schemas/RollbackInputBody.json
+          format: uri
+          readOnly: true
+          type: string
+        generation:
+          description: The authored generation to check out.
+          format: int64
+          type: integer
+      required:
+        - generation
+      type: object
+    RollbackOutputBody:
+      additionalProperties: false
+      properties:
+        $schema:
+          description: A URL to the JSON Schema for this object.
+          examples:
+            - https://example.com/schemas/RollbackOutputBody.json
+          format: uri
+          readOnly: true
+          type: string
+        generation:
+          format: int64
+          type: integer
+      required:
+        - generation
+      type: object
+    RootPageItem:
+      additionalProperties: false
+      properties:
+        conditions:
+          items:
+            $ref: "#/components/schemas/ConditionDTO"
+          type:
+            - array
+            - "null"
+        created_at:
+          format: date-time
+          type:
+            - string
+            - "null"
+        deletion_requested_at:
+          format: date-time
+          type:
+            - string
+            - "null"
+        finalizers:
+          items:
+            type: string
+          type:
+            - array
+            - "null"
+        generation:
+          format: int64
+          type: integer
+        health_ok:
+          type: boolean
+        is_ready:
+          type: boolean
+        kind:
+          type: string
+        kind_version:
+          format: int64
+          type: integer
+        labels:
+          additionalProperties:
+            type: string
+          type: object
+        name:
+          type: string
+        owner_kind:
+          type: string
+        owner_name:
+          type: string
+        phase:
+          type: string
+        resource_count:
+          format: int64
+          type: integer
+        synced_gen:
+          format: int64
+          type: integer
+        updated_at:
+          format: date-time
+          type:
+            - string
+            - "null"
+      required:
+        - resource_count
+        - kind
+        - name
+        - generation
+        - synced_gen
+        - is_ready
+        - health_ok
+        - phase
+        - labels
+        - created_at
+        - updated_at
+      type: object
+    RouteSpec:
+      additionalProperties: false
+      properties:
+        tgw_id:
+          description: Provider TGW id the VPC attaches to.
+          minLength: 1
+          type: string
+        vpc_id:
+          description: Provider VPC id this route attaches.
+          minLength: 1
+          type: string
+      required:
+        - vpc_id
+        - tgw_id
+      type: object
+    RouteStatus:
+      additionalProperties: false
+      properties:
+        route_id:
+          description: Provider-issued route id.
+          type: string
+      required:
+        - route_id
+      type: object
+    SpecRevisionItem:
+      additionalProperties: false
+      properties:
+        created_at:
+          format: date-time
+          type: string
+        generation:
+          format: int64
+          type: integer
+        is_current:
+          type: boolean
+        size_bytes:
+          format: int64
+          type: integer
+        source:
+          type: string
+      required:
+        - generation
+        - source
+        - size_bytes
+        - is_current
+        - created_at
+      type: object
+    StatussinkConfig:
+      additionalProperties: false
+      properties:
+        endpoint:
+          description: Object-store endpoint dialed once at startup (BOOTSTRAP). A missing/invalid value fails Setup; the kind stays pending until a default config supplies it.
+          type: string
+        prefix:
+          description: Key prefix uploaded objects land under (WORK-TIME, live-editable).
+          type: string
+      type: object
+    SubgraphNode:
+      additionalProperties: false
+      properties:
+        min_depth:
+          format: int32
+          type: integer
+        ref:
+          type: string
+      required:
+        - ref
+        - min_depth
+      type: object
+    SubgraphOutputBody:
+      additionalProperties: false
+      properties:
+        $schema:
+          description: A URL to the JSON Schema for this object.
+          examples:
+            - https://example.com/schemas/SubgraphOutputBody.json
+          format: uri
+          readOnly: true
+          type: string
+        edges:
+          items:
+            $ref: "#/components/schemas/GraphEdge"
+          type:
+            - array
+            - "null"
+        nodes:
+          items:
+            $ref: "#/components/schemas/SubgraphNode"
+          type:
+            - array
+            - "null"
+      required:
+        - nodes
+        - edges
+      type: object
+    SummaryOutputBody:
+      additionalProperties: false
+      properties:
+        $schema:
+          description: A URL to the JSON Schema for this object.
+          examples:
+            - https://example.com/schemas/SummaryOutputBody.json
+          format: uri
+          readOnly: true
+          type: string
+        by_kind:
+          items:
+            $ref: "#/components/schemas/ReadinessKindCount"
+          type:
+            - array
+            - "null"
+        owner:
+          $ref: "#/components/schemas/ResourceInfo"
+        totals:
+          $ref: "#/components/schemas/ReadinessTotals"
+      required:
+        - owner
+        - totals
+        - by_kind
+      type: object
+    SummaryScopedOutputBody:
+      additionalProperties: false
+      properties:
+        $schema:
+          description: A URL to the JSON Schema for this object.
+          examples:
+            - https://example.com/schemas/SummaryScopedOutputBody.json
+          format: uri
+          readOnly: true
+          type: string
+        by_kind:
+          items:
+            $ref: "#/components/schemas/ReadinessKindCount"
+          type:
+            - array
+            - "null"
+        owners:
+          items:
+            $ref: "#/components/schemas/ResourceInfo"
+          type:
+            - array
+            - "null"
+        totals:
+          $ref: "#/components/schemas/ReadinessTotals"
+      required:
+        - owners
+        - totals
+        - by_kind
+      type: object
+    TgwSpec:
+      additionalProperties: false
+      properties:
+        name:
+          description: Logical TGW name.
+          minLength: 1
+          type: string
+      required:
+        - name
+      type: object
+    TgwStatus:
+      additionalProperties: false
+      properties:
+        tgw_id:
+          description: Provider-issued transit gateway id.
+          type: string
+      required:
+        - tgw_id
+      type: object
+    TopologyBucket:
+      additionalProperties: false
+      properties:
+        bucket:
+          type: string
+        by_readiness:
+          additionalProperties:
+            format: int64
+            type: integer
+          type: object
+        total:
+          format: int64
+          type: integer
+      required:
+        - bucket
+        - by_readiness
+        - total
+      type: object
+    TopologyKeysOutputBody:
+      additionalProperties: false
+      properties:
+        $schema:
+          description: A URL to the JSON Schema for this object.
+          examples:
+            - https://example.com/schemas/TopologyKeysOutputBody.json
+          format: uri
+          readOnly: true
+          type: string
+        keys:
+          items:
+            type: string
+          type:
+            - array
+            - "null"
+      required:
+        - keys
+      type: object
+    TopologyLeavesOutputBody:
+      additionalProperties: false
+      properties:
+        $schema:
+          description: A URL to the JSON Schema for this object.
+          examples:
+            - https://example.com/schemas/TopologyLeavesOutputBody.json
+          format: uri
+          readOnly: true
+          type: string
+        owner:
+          $ref: "#/components/schemas/ResourceInfo"
+        resources:
+          items:
+            $ref: "#/components/schemas/ResourceListItem"
+          type:
+            - array
+            - "null"
+      required:
+        - owner
+        - resources
+      type: object
+    TopologyOutputBody:
+      additionalProperties: false
+      properties:
+        $schema:
+          description: A URL to the JSON Schema for this object.
+          examples:
+            - https://example.com/schemas/TopologyOutputBody.json
+          format: uri
+          readOnly: true
+          type: string
+        buckets:
+          items:
+            $ref: "#/components/schemas/TopologyBucket"
+          type:
+            - array
+            - "null"
+        group_by:
+          items:
+            type: string
+          type:
+            - array
+            - "null"
+        next_key:
+          type: string
+        owner:
+          $ref: "#/components/schemas/ResourceInfo"
+        path:
+          items:
+            type: string
+          type:
+            - array
+            - "null"
+      required:
+        - owner
+        - group_by
+        - path
+        - next_key
+        - buckets
+      type: object
+    UpstreamDep:
+      additionalProperties: false
+      properties:
+        kind:
+          type: string
+        name:
+          type: string
+        upstream_health_ok:
+          type: boolean
+        upstream_ready:
+          type: boolean
+        upstream_updated_at:
+          format: date-time
+          type:
+            - string
+            - "null"
+        value_mappings:
+          items:
+            $ref: "#/components/schemas/ValueMappingDTO"
+          type:
+            - array
+            - "null"
+      required:
+        - kind
+        - name
+        - upstream_ready
+        - upstream_health_ok
+        - value_mappings
+      type: object
+    ValueMappingDTO:
+      additionalProperties: false
+      properties:
+        dependent_field:
+          type: string
+        source_field:
+          type: string
+      required:
+        - dependent_field
+        - source_field
+      type: object
+    VersionOutputBody:
+      additionalProperties: false
+      properties:
+        $schema:
+          description: A URL to the JSON Schema for this object.
+          examples:
+            - https://example.com/schemas/VersionOutputBody.json
+          format: uri
+          readOnly: true
+          type: string
+        api_version:
+          type: string
+        api_versions:
+          items:
+            type: string
+          type:
+            - array
+            - "null"
+        go_version:
+          type: string
+        version:
+          type: string
+      required:
+        - version
+        - api_version
+        - api_versions
+        - go_version
+      type: object
+    VpcConfig:
+      additionalProperties: false
+      description: "vpc/v1 operational config (a provider config document): the default S3 bucket flow logs land in. A per-(kind, kind_version) config — vpc/v1's default is separate from vpc/v2's."
+      properties:
+        flow_logs_bucket:
+          description: S3 bucket VPC flow logs are written to.
+          type: string
+      type: object
+    VpcConfigV2:
+      additionalProperties: false
+      description: "vpc/v2 operational config — DIFFERENT shape from v1's: adds default_region. This is why a config is per-(kind, kind_version): a vpc/v2 config validates against THIS schema, and a v1 config (no default_region) is a different document for a different kind_version."
+      properties:
+        default_region:
+          description: Default region for VPCs of this kind/kind_version (v2 config addition).
+          type: string
+        flow_logs_bucket:
+          description: S3 bucket VPC flow logs are written to.
+          type: string
+      type: object
+    VpcSpec:
+      additionalProperties: false
+      properties:
+        account_id:
+          description: Provider 12-digit account id this VPC lives in.
+          maxLength: 12
+          minLength: 12
+          type: string
+        cidr:
+          description: VPC CIDR block, e.g. 10.0.0.0/16.
+          minLength: 9
+          type: string
+        tags:
+          additionalProperties:
+            type: string
+          description: Optional free-form tags (added in a non-breaking v1 evolution).
+          type: object
+      required:
+        - account_id
+        - cidr
+      type: object
+    VpcSpecV2:
+      additionalProperties: false
+      properties:
+        account_id:
+          description: Provider 12-digit account id this VPC lives in.
+          maxLength: 12
+          minLength: 12
+          type: string
+        cidr:
+          description: VPC CIDR block, e.g. 10.0.0.0/16.
+          minLength: 9
+          type: string
+        region:
+          description: Cloud region the VPC is created in (v2, required).
+          minLength: 2
+          type: string
+      required:
+        - account_id
+        - cidr
+        - region
+      type: object
+    VpcStatus:
+      additionalProperties: false
+      properties:
+        vpc_id:
+          description: Provider-issued VPC id.
+          type: string
+      required:
+        - vpc_id
+      type: object
+    VpcStatusV2:
+      additionalProperties: false
+      properties:
+        region:
+          description: Region the v2 worker placed the VPC in (echoed from spec).
+          type: string
+        vpc_id:
+          description: Provider-issued VPC id.
+          type: string
+      required:
+        - vpc_id
+        - region
+      type: object
+    WorkDTO:
+      additionalProperties: false
+      properties:
+        attempts:
+          format: int32
+          type: integer
+        broker_id:
+          type: string
+        claimed:
+          type: boolean
+        claimed_at:
+          format: date-time
+          type:
+            - string
+            - "null"
+        elapsed:
+          type: string
+        generation:
+          format: int64
+          type: integer
+        heartbeat_age:
+          type: string
+        heartbeat_at:
+          format: date-time
+          type:
+            - string
+            - "null"
+        task_type:
+          type: string
+        worker_id:
+          type: string
+      required:
+        - task_type
+        - claimed
+        - attempts
+        - claimed_at
+        - elapsed
+        - heartbeat_at
+        - heartbeat_age
+        - generation
+      type: object
+info:
+  title: Converge API
+  version: 2.0.0
+openapi: 3.1.0
+paths:
+  /api/v1/cluster-members:
+    get:
+      operationId: get-api-v1-cluster-members
+      responses:
+        "200":
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ClusterInfoOutputBody"
+          description: OK
+        default:
+          content:
+            application/problem+json:
+              schema:
+                $ref: "#/components/schemas/ErrorModel"
+          description: Error
+      summary: Get API v1 cluster members
+  /api/v1/kinds:
+    get:
+      operationId: get-api-v1-kinds
+      responses:
+        "200":
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ListKindsOutputBody"
+          description: OK
+        default:
+          content:
+            application/problem+json:
+              schema:
+                $ref: "#/components/schemas/ErrorModel"
+          description: Error
+      summary: Get API v1 kinds
+  /api/v1/kinds/manifests:
+    get:
+      operationId: get-api-v1-kinds-manifests
+      responses:
+        "200":
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ListManifestsOutputBody"
+          description: OK
+        default:
+          content:
+            application/problem+json:
+              schema:
+                $ref: "#/components/schemas/ErrorModel"
+          description: Error
+      summary: Get API v1 kinds manifests
+  /api/v1/kinds/{kind}/manifest:
+    put:
+      operationId: put-api-v1-kinds-by-kind-manifest
+      parameters:
+        - description: Resource kind.
+          in: path
+          name: kind
+          required: true
+          schema:
+            description: Resource kind.
+            type: string
+      requestBody:
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/PutManifestBody"
+        required: true
+      responses:
+        "200":
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ManifestOutputBody"
+          description: OK
+        default:
+          content:
+            application/problem+json:
+              schema:
+                $ref: "#/components/schemas/ErrorModel"
+          description: Error
+      summary: Put API v1 kinds by kind manifest
+  /api/v1/kinds/{kind}/schema:
+    get:
+      operationId: get-api-v1-kinds-by-kind-schema
+      parameters:
+        - description: Resource kind.
+          in: path
+          name: kind
+          required: true
+          schema:
+            description: Resource kind.
+            type: string
+        - description: Web-API version (v1, v2, …) whose /docs schema refs to resolve; omitted resolves the LOWEST published version, an over-large value clamps to the highest. A /docs display convenience only (no data is written), so it has no v1 default.
+          explode: false
+          in: query
+          name: kind_version
+          schema:
+            description: Web-API version (v1, v2, …) whose /docs schema refs to resolve; omitted resolves the LOWEST published version, an over-large value clamps to the highest. A /docs display convenience only (no data is written), so it has no v1 default.
+            format: int64
+            type: integer
+      responses:
+        "200":
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/KindSchemaOutputBody"
+          description: OK
+        default:
+          content:
+            application/problem+json:
+              schema:
+                $ref: "#/components/schemas/ErrorModel"
+          description: Error
+      summary: Get API v1 kinds by kind schema
+  /api/v1/kinds/{kind}/versions/{kind_version}/config:
+    put:
+      operationId: put-api-v1-kinds-by-kind-versions-by-kind-version-config
+      parameters:
+        - description: Resource kind.
+          in: path
+          name: kind
+          required: true
+          schema:
+            description: Resource kind.
+            type: string
+        - description: Web-API version (v1, v2, …; 1–32767) whose operational config to edit.
+          in: path
+          name: kind_version
+          required: true
+          schema:
+            description: Web-API version (v1, v2, …; 1–32767) whose operational config to edit.
+            format: int64
+            maximum: 32767
+            minimum: 1
+            type: integer
+      requestBody:
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/ApplyKindConfigInputBody"
+        required: true
+      responses:
+        "200":
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/KindConfigOutputBody"
+          description: OK
+        default:
+          content:
+            application/problem+json:
+              schema:
+                $ref: "#/components/schemas/ErrorModel"
+          description: Error
+      summary: Put API v1 kinds by kind versions by kind version config
+  /api/v1/kinds/{kind}/versions/{kind_version}/manifest:
+    delete:
+      operationId: delete-api-v1-kinds-by-kind-versions-by-kind-version-manifest
+      parameters:
+        - description: Resource kind.
+          in: path
+          name: kind
+          required: true
+          schema:
+            description: Resource kind.
+            type: string
+        - description: Web-API version (v1, v2, …; 1–32767) to delete.
+          in: path
+          name: kind_version
+          required: true
+          schema:
+            description: Web-API version (v1, v2, …; 1–32767) to delete.
+            format: int64
+            maximum: 32767
+            minimum: 1
+            type: integer
+      responses:
+        "200":
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/DeleteManifestOutputBody"
+          description: OK
+        default:
+          content:
+            application/problem+json:
+              schema:
+                $ref: "#/components/schemas/ErrorModel"
+          description: Error
+      summary: Delete API v1 kinds by kind versions by kind version manifest
+    get:
+      operationId: get-api-v1-kinds-by-kind-versions-by-kind-version-manifest
+      parameters:
+        - description: Resource kind.
+          in: path
+          name: kind
+          required: true
+          schema:
+            description: Resource kind.
+            type: string
+        - description: Web-API version (v1, v2, …; 1–32767).
+          in: path
+          name: kind_version
+          required: true
+          schema:
+            description: Web-API version (v1, v2, …; 1–32767).
+            format: int64
+            maximum: 32767
+            minimum: 1
+            type: integer
+      responses:
+        "200":
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ManifestOutputBody"
+          description: OK
+        default:
+          content:
+            application/problem+json:
+              schema:
+                $ref: "#/components/schemas/ErrorModel"
+          description: Error
+      summary: Get API v1 kinds by kind versions by kind version manifest
+  /api/v1/providerconfigs:
+    get:
+      operationId: get-api-v1-providerconfigs
+      parameters:
+        - description: Optional exact consumer-kind filter; omit for all.
+          explode: false
+          in: query
+          name: kind
+          schema:
+            description: Optional exact consumer-kind filter; omit for all.
+            type: string
+        - description: Optional exact consumer-kind version (v1, v2, …; 1–32767) filter; 0/omit for any.
+          explode: false
+          in: query
+          name: kind_version
+          schema:
+            description: Optional exact consumer-kind version (v1, v2, …; 1–32767) filter; 0/omit for any.
+            format: int64
+            maximum: 32767
+            minimum: 0
+            type: integer
+        - description: Optional case-insensitive substring match on name.
+          explode: false
+          in: query
+          name: name
+          schema:
+            description: Optional case-insensitive substring match on name.
+            type: string
+        - description: Optional is_default filter; omit for any, true/false to filter.
+          explode: false
+          in: query
+          name: default
+          schema:
+            description: Optional is_default filter; omit for any, true/false to filter.
+            enum:
+              - "true"
+              - "false"
+            type: string
+        - explode: false
+          in: query
+          name: limit
+          schema:
+            default: 100
+            format: int64
+            maximum: 500
+            minimum: 1
+            type: integer
+        - explode: false
+          in: query
+          name: offset
+          schema:
+            default: 0
+            format: int64
+            minimum: 0
+            type: integer
+      responses:
+        "200":
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ListProviderConfigsOutputBody"
+          description: OK
+        default:
+          content:
+            application/problem+json:
+              schema:
+                $ref: "#/components/schemas/ErrorModel"
+          description: Error
+      summary: Get API v1 providerconfigs
+    post:
+      operationId: post-api-v1-providerconfigs
+      requestBody:
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/ApplyProviderConfigInputBody"
+        required: true
+      responses:
+        "200":
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ProviderConfigBody"
+          description: OK
+          headers:
+            X-Apply-Result:
+              schema:
+                type: string
+        "201":
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ProviderConfigBody"
+          description: "Created — a new resource was inserted (X-Apply-Result: created)."
+        default:
+          content:
+            application/problem+json:
+              schema:
+                $ref: "#/components/schemas/ErrorModel"
+          description: Error
+      summary: Post API v1 providerconfigs
+  /api/v1/providerconfigs/{name}:
+    delete:
+      operationId: delete-api-v1-providerconfigs-by-name
+      parameters:
+        - description: Config name.
+          in: path
+          name: name
+          required: true
+          schema:
+            description: Config name.
+            type: string
+      responses:
+        "200":
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/DeleteProviderConfigOutputBody"
+          description: OK
+        default:
+          content:
+            application/problem+json:
+              schema:
+                $ref: "#/components/schemas/ErrorModel"
+          description: Error
+      summary: Delete API v1 providerconfigs by name
+    get:
+      operationId: get-api-v1-providerconfigs-by-name
+      parameters:
+        - description: Config name.
+          in: path
+          name: name
+          required: true
+          schema:
+            description: Config name.
+            type: string
+      responses:
+        "200":
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ProviderConfigBody"
+          description: OK
+          headers:
+            X-Apply-Result:
+              schema:
+                type: string
+        default:
+          content:
+            application/problem+json:
+              schema:
+                $ref: "#/components/schemas/ErrorModel"
+          description: Error
+      summary: Get API v1 providerconfigs by name
+  /api/v1/raw/resources/{kind}/{name}/manifest:
+    get:
+      operationId: get-api-v1-raw-resources-by-kind-by-name-manifest
+      parameters:
+        - description: Resource kind.
+          in: path
+          name: kind
+          required: true
+          schema:
+            description: Resource kind.
+            type: string
+        - description: Resource name.
+          in: path
+          name: name
+          required: true
+          schema:
+            description: Resource name.
+            type: string
+      responses:
+        "200":
+          description: OK
+        default:
+          content:
+            application/problem+json:
+              schema:
+                $ref: "#/components/schemas/ErrorModel"
+          description: Error
+      summary: Get API v1 raw resources by kind by name manifest
+  /api/v1/raw/resources/{kind}/{name}/spec/{generation}:
+    get:
+      operationId: get-api-v1-raw-resources-by-kind-by-name-spec-by-generation
+      parameters:
+        - description: Resource kind.
+          in: path
+          name: kind
+          required: true
+          schema:
+            description: Resource kind.
+            type: string
+        - description: Resource name.
+          in: path
+          name: name
+          required: true
+          schema:
+            description: Resource name.
+            type: string
+        - description: Authored generation to download
+          in: path
+          name: generation
+          required: true
+          schema:
+            description: Authored generation to download
+            format: int64
+            type: integer
+      responses:
+        "200":
+          description: OK
+        default:
+          content:
+            application/problem+json:
+              schema:
+                $ref: "#/components/schemas/ErrorModel"
+          description: Error
+      summary: Get API v1 raw resources by kind by name spec by generation
+  /api/v1/raw/resources/{kind}/{name}/status:
+    get:
+      operationId: get-api-v1-raw-resources-by-kind-by-name-status
+      parameters:
+        - description: Resource kind.
+          in: path
+          name: kind
+          required: true
+          schema:
+            description: Resource kind.
+            type: string
+        - description: Resource name.
+          in: path
+          name: name
+          required: true
+          schema:
+            description: Resource name.
+            type: string
+      responses:
+        "200":
+          description: OK
+        default:
+          content:
+            application/problem+json:
+              schema:
+                $ref: "#/components/schemas/ErrorModel"
+          description: Error
+      summary: Get API v1 raw resources by kind by name status
+  /api/v1/reactor-bindings:
+    get:
+      operationId: get-api-v1-reactor-bindings
+      responses:
+        "200":
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ListReactorBindingsOutputBody"
+          description: OK
+        default:
+          content:
+            application/problem+json:
+              schema:
+                $ref: "#/components/schemas/ErrorModel"
+          description: Error
+      summary: Get API v1 reactor bindings
+    post:
+      operationId: post-api-v1-reactor-bindings
+      requestBody:
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/ApplyReactorBindingInputBody"
+        required: true
+      responses:
+        "200":
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ReactorBindingBody"
+          description: OK
+        default:
+          content:
+            application/problem+json:
+              schema:
+                $ref: "#/components/schemas/ErrorModel"
+          description: Error
+      summary: Post API v1 reactor bindings
+  /api/v1/reactor-bindings/{name}:
+    delete:
+      operationId: delete-api-v1-reactor-bindings-by-name
+      parameters:
+        - description: Binding name.
+          in: path
+          name: name
+          required: true
+          schema:
+            description: Binding name.
+            type: string
+      responses:
+        "200":
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/DeleteReactorBindingOutputBody"
+          description: OK
+        default:
+          content:
+            application/problem+json:
+              schema:
+                $ref: "#/components/schemas/ErrorModel"
+          description: Error
+      summary: Delete API v1 reactor bindings by name
+  /api/v1/resources:
+    get:
+      operationId: get-api-v1-resources
+      parameters:
+        - description: Scope to these owners' children; each is kind/name. Repeat for a union.
+          explode: true
+          in: query
+          name: owner
+          schema:
+            description: Scope to these owners' children; each is kind/name. Repeat for a union.
+            items:
+              type: string
+            type:
+              - array
+              - "null"
+        - explode: true
+          in: query
+          name: kind
+          schema:
+            items:
+              type: string
+            type:
+              - array
+              - "null"
+        - description: Repeatable (kind, version) pair filter as kind/vN (e.g. vpc/v1). Exact per-pair match.
+          explode: true
+          in: query
+          name: kv
+          schema:
+            description: Repeatable (kind, version) pair filter as kind/vN (e.g. vpc/v1). Exact per-pair match.
+            items:
+              type: string
+            type:
+              - array
+              - "null"
+        - description: DEPRECATED single-version filter (use kv=kind/vN); 0/omitted = any.
+          explode: false
+          in: query
+          name: kind_version
+          schema:
+            description: DEPRECATED single-version filter (use kv=kind/vN); 0/omitted = any.
+            format: int64
+            maximum: 32767
+            minimum: 0
+            type: integer
+        - description: Return rows in ANY of these readiness phases (repeat the param to union; omit for all).
+          explode: true
+          in: query
+          name: phase
+          schema:
+            description: Return rows in ANY of these readiness phases (repeat the param to union; omit for all).
+            items:
+              enum:
+                - Ready
+                - Reconciling
+                - Degraded
+                - Failed
+                - Deleting
+                - Orphaned
+                - Quarantined
+              type: string
+            type:
+              - array
+              - "null"
+        - explode: false
+          in: query
+          name: name
+          schema:
+            type: string
+        - explode: true
+          in: query
+          name: label
+          schema:
+            items:
+              type: string
+            type:
+              - array
+              - "null"
+        - explode: false
+          in: query
+          name: limit
+          schema:
+            default: 100
+            format: int64
+            maximum: 500
+            minimum: 1
+            type: integer
+        - explode: false
+          in: query
+          name: cursor
+          schema:
+            type: string
+      responses:
+        "200":
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ListResourcesPageMultiOutputBody"
+          description: OK
+          headers:
+            X-Next-Cursor:
+              schema:
+                type: string
+        default:
+          content:
+            application/problem+json:
+              schema:
+                $ref: "#/components/schemas/ErrorModel"
+          description: Error
+      summary: Get API v1 resources
+    post:
+      operationId: post-api-v1-resources
+      requestBody:
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/ApplyResourceManifestInputBody"
+        required: true
+      responses:
+        "200":
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ResourceFull"
+          description: OK
+          headers:
+            X-Apply-Result:
+              schema:
+                type: string
+        "201":
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ResourceFull"
+          description: "Created — a new resource was inserted (X-Apply-Result: created)."
+        default:
+          content:
+            application/problem+json:
+              schema:
+                $ref: "#/components/schemas/ErrorModel"
+          description: Error
+      summary: Post API v1 resources
+  /api/v1/resources/roots:
+    get:
+      operationId: get-api-v1-resources-roots
+      parameters:
+        - description: Repeatable kind filter (any version of these kinds).
+          explode: true
+          in: query
+          name: kind
+          schema:
+            description: Repeatable kind filter (any version of these kinds).
+            items:
+              type: string
+            type:
+              - array
+              - "null"
+        - description: Repeatable (kind, version) pair filter as kind/vN (e.g. vpc/v1). Exact per-pair match.
+          explode: true
+          in: query
+          name: kv
+          schema:
+            description: Repeatable (kind, version) pair filter as kind/vN (e.g. vpc/v1). Exact per-pair match.
+            items:
+              type: string
+            type:
+              - array
+              - "null"
+        - description: DEPRECATED single-version filter (use kv=kind/vN); 0/omitted = any version. Only meaningful alongside a kind filter.
+          explode: false
+          in: query
+          name: kind_version
+          schema:
+            description: DEPRECATED single-version filter (use kv=kind/vN); 0/omitted = any version. Only meaningful alongside a kind filter.
+            format: int64
+            maximum: 32767
+            minimum: 0
+            type: integer
+        - description: ILIKE substring filter.
+          explode: false
+          in: query
+          name: name
+          schema:
+            description: ILIKE substring filter.
+            type: string
+        - description: RFC3339.
+          explode: false
+          in: query
+          name: created_after
+          schema:
+            description: RFC3339.
+            format: date-time
+            type: string
+        - description: RFC3339.
+          explode: false
+          in: query
+          name: created_before
+          schema:
+            description: RFC3339.
+            format: date-time
+            type: string
+        - description: RFC3339.
+          explode: false
+          in: query
+          name: updated_after
+          schema:
+            description: RFC3339.
+            format: date-time
+            type: string
+        - description: RFC3339.
+          explode: false
+          in: query
+          name: updated_before
+          schema:
+            description: RFC3339.
+            format: date-time
+            type: string
+        - description: Min generation.
+          explode: false
+          in: query
+          name: gen_min
+          schema:
+            description: Min generation.
+            format: int64
+            type: integer
+        - description: Max generation.
+          explode: false
+          in: query
+          name: gen_max
+          schema:
+            description: Max generation.
+            format: int64
+            type: integer
+        - description: Min child count.
+          explode: false
+          in: query
+          name: count_min
+          schema:
+            description: Min child count.
+            format: int64
+            type: integer
+        - description: Max child count.
+          explode: false
+          in: query
+          name: count_max
+          schema:
+            description: Max child count.
+            format: int64
+            type: integer
+        - description: Only return rows in this readiness phase.
+          explode: false
+          in: query
+          name: phase
+          schema:
+            description: Only return rows in this readiness phase.
+            enum:
+              - Ready
+              - Reconciling
+              - Degraded
+              - Failed
+              - Deleting
+              - Orphaned
+              - Quarantined
+            type: string
+        - explode: false
+          in: query
+          name: limit
+          schema:
+            default: 50
+            format: int64
+            maximum: 500
+            minimum: 1
+            type: integer
+        - explode: false
+          in: query
+          name: cursor
+          schema:
+            type: string
+      responses:
+        "200":
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ListRootsPageOutputBody"
+          description: OK
+          headers:
+            X-Next-Cursor:
+              schema:
+                type: string
+            X-Total:
+              schema:
+                type: string
+        default:
+          content:
+            application/problem+json:
+              schema:
+                $ref: "#/components/schemas/ErrorModel"
+          description: Error
+      summary: Get API v1 resources roots
+  /api/v1/resources/summary:
+    get:
+      operationId: get-api-v1-resources-summary
+      parameters:
+        - description: Scope to these owners; each is kind/name. Repeat for a union.
+          explode: true
+          in: query
+          name: owner
+          schema:
+            description: Scope to these owners; each is kind/name. Repeat for a union.
+            items:
+              type: string
+            type:
+              - array
+              - "null"
+      responses:
+        "200":
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/SummaryScopedOutputBody"
+          description: OK
+        default:
+          content:
+            application/problem+json:
+              schema:
+                $ref: "#/components/schemas/ErrorModel"
+          description: Error
+      summary: Get API v1 resources summary
+  /api/v1/resources/{kind}/{name}:
+    delete:
+      operationId: delete-api-v1-resources-by-kind-by-name
+      parameters:
+        - description: Resource kind.
+          in: path
+          name: kind
+          required: true
+          schema:
+            description: Resource kind.
+            type: string
+        - description: Resource name; identity together with kind.
+          in: path
+          name: name
+          required: true
+          schema:
+            description: Resource name; identity together with kind.
+            type: string
+      responses:
+        "200":
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/DeleteResourceOutputBody"
+          description: OK
+        default:
+          content:
+            application/problem+json:
+              schema:
+                $ref: "#/components/schemas/ErrorModel"
+          description: Error
+      summary: Delete API v1 resources by kind by name
+    get:
+      operationId: get-api-v1-resources-by-kind-by-name
+      parameters:
+        - description: Resource kind.
+          in: path
+          name: kind
+          required: true
+          schema:
+            description: Resource kind.
+            type: string
+        - description: Resource name; identity together with kind.
+          in: path
+          name: name
+          required: true
+          schema:
+            description: Resource name; identity together with kind.
+            type: string
+      responses:
+        "200":
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ResourceFull"
+          description: OK
+          headers:
+            X-Apply-Result:
+              schema:
+                type: string
+        default:
+          content:
+            application/problem+json:
+              schema:
+                $ref: "#/components/schemas/ErrorModel"
+          description: Error
+      summary: Get API v1 resources by kind by name
+  /api/v1/resources/{kind}/{name}/changes:
+    get:
+      operationId: get-api-v1-resources-by-kind-by-name-changes
+      parameters:
+        - description: Resource kind.
+          in: path
+          name: kind
+          required: true
+          schema:
+            description: Resource kind.
+            type: string
+        - description: Resource name; identity together with kind.
+          in: path
+          name: name
+          required: true
+          schema:
+            description: Resource name; identity together with kind.
+            type: string
+        - description: Only resources whose updated_at > this.
+          explode: false
+          in: query
+          name: since
+          schema:
+            description: Only resources whose updated_at > this.
+            format: date-time
+            type: string
+      responses:
+        "200":
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ChangesOutputBody"
+          description: OK
+          headers:
+            X-More:
+              schema:
+                description: true if response was capped at 1000.
+                type: string
+            X-Next-Cursor:
+              schema:
+                type: string
+        default:
+          content:
+            application/problem+json:
+              schema:
+                $ref: "#/components/schemas/ErrorModel"
+          description: Error
+      summary: Get API v1 resources by kind by name changes
+  /api/v1/resources/{kind}/{name}/children:
+    get:
+      operationId: get-api-v1-resources-by-kind-by-name-children
+      parameters:
+        - description: Resource kind.
+          in: path
+          name: kind
+          required: true
+          schema:
+            description: Resource kind.
+            type: string
+        - description: Resource name; identity together with kind.
+          in: path
+          name: name
+          required: true
+          schema:
+            description: Resource name; identity together with kind.
+            type: string
+        - explode: true
+          in: query
+          name: kind
+          schema:
+            items:
+              type: string
+            type:
+              - array
+              - "null"
+        - description: Repeatable (kind, version) pair filter as kind/vN (e.g. vpc/v1). Exact per-pair match.
+          explode: true
+          in: query
+          name: kv
+          schema:
+            description: Repeatable (kind, version) pair filter as kind/vN (e.g. vpc/v1). Exact per-pair match.
+            items:
+              type: string
+            type:
+              - array
+              - "null"
+        - description: DEPRECATED single-version filter (use kv=kind/vN); 0/omitted = any.
+          explode: false
+          in: query
+          name: kind_version
+          schema:
+            description: DEPRECATED single-version filter (use kv=kind/vN); 0/omitted = any.
+            format: int64
+            maximum: 32767
+            minimum: 0
+            type: integer
+        - description: Return rows in ANY of these readiness phases (repeat the param to union; omit for all).
+          explode: true
+          in: query
+          name: phase
+          schema:
+            description: Return rows in ANY of these readiness phases (repeat the param to union; omit for all).
+            items:
+              enum:
+                - Ready
+                - Reconciling
+                - Degraded
+                - Failed
+                - Deleting
+                - Orphaned
+                - Quarantined
+              type: string
+            type:
+              - array
+              - "null"
+        - explode: false
+          in: query
+          name: name
+          schema:
+            type: string
+        - explode: true
+          in: query
+          name: label
+          schema:
+            items:
+              type: string
+            type:
+              - array
+              - "null"
+        - explode: false
+          in: query
+          name: limit
+          schema:
+            default: 100
+            format: int64
+            maximum: 500
+            minimum: 1
+            type: integer
+        - explode: false
+          in: query
+          name: cursor
+          schema:
+            type: string
+      responses:
+        "200":
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ListResourcesPageOutputBody"
+          description: OK
+          headers:
+            X-Next-Cursor:
+              schema:
+                type: string
+        default:
+          content:
+            application/problem+json:
+              schema:
+                $ref: "#/components/schemas/ErrorModel"
+          description: Error
+      summary: Get API v1 resources by kind by name children
+  /api/v1/resources/{kind}/{name}/dependencies:
+    get:
+      operationId: get-api-v1-resources-by-kind-by-name-dependencies
+      parameters:
+        - description: Resource kind.
+          in: path
+          name: kind
+          required: true
+          schema:
+            description: Resource kind.
+            type: string
+        - description: Resource name; identity together with kind.
+          in: path
+          name: name
+          required: true
+          schema:
+            description: Resource name; identity together with kind.
+            type: string
+      responses:
+        "200":
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ListDependenciesOutputBody"
+          description: OK
+        default:
+          content:
+            application/problem+json:
+              schema:
+                $ref: "#/components/schemas/ErrorModel"
+          description: Error
+      summary: Get API v1 resources by kind by name dependencies
+  /api/v1/resources/{kind}/{name}/events:
+    get:
+      operationId: get-api-v1-resources-by-kind-by-name-events
+      parameters:
+        - description: Resource kind.
+          in: path
+          name: kind
+          required: true
+          schema:
+            description: Resource kind.
+            type: string
+        - description: Resource name; identity together with kind.
+          in: path
+          name: name
+          required: true
+          schema:
+            description: Resource name; identity together with kind.
+            type: string
+        - description: Opaque pagination token for paging older events.
+          explode: false
+          in: query
+          name: cursor
+          schema:
+            description: Opaque pagination token for paging older events.
+            type: string
+        - explode: false
+          in: query
+          name: limit
+          schema:
+            default: 100
+            format: int64
+            maximum: 500
+            minimum: 1
+            type: integer
+      responses:
+        "200":
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ListEventsOutputBody"
+          description: OK
+          headers:
+            X-Next-Cursor:
+              schema:
+                type: string
+        default:
+          content:
+            application/problem+json:
+              schema:
+                $ref: "#/components/schemas/ErrorModel"
+          description: Error
+      summary: Get API v1 resources by kind by name events
+  /api/v1/resources/{kind}/{name}/graph:
+    get:
+      operationId: get-api-v1-resources-by-kind-by-name-graph
+      parameters:
+        - description: Owner resource kind.
+          in: path
+          name: kind
+          required: true
+          schema:
+            description: Owner resource kind.
+            type: string
+        - description: Owner resource name.
+          in: path
+          name: name
+          required: true
+          schema:
+            description: Owner resource name.
+            type: string
+        - description: Max nodes AND max edges returned.
+          explode: false
+          in: query
+          name: limit
+          schema:
+            default: 500
+            description: Max nodes AND max edges returned.
+            format: int64
+            maximum: 1000
+            minimum: 1
+            type: integer
+      responses:
+        "200":
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/GraphOutputBody"
+          description: OK
+        default:
+          content:
+            application/problem+json:
+              schema:
+                $ref: "#/components/schemas/ErrorModel"
+          description: Error
+      summary: Get API v1 resources by kind by name graph
+  /api/v1/resources/{kind}/{name}/ops:
+    get:
+      operationId: get-api-v1-resources-by-kind-by-name-ops
+      parameters:
+        - description: Resource kind.
+          in: path
+          name: kind
+          required: true
+          schema:
+            description: Resource kind.
+            type: string
+        - description: Resource name; identity together with kind.
+          in: path
+          name: name
+          required: true
+          schema:
+            description: Resource name; identity together with kind.
+            type: string
+        - description: Filter by state; repeat for a union.
+          explode: true
+          in: query
+          name: state
+          schema:
+            description: Filter by state; repeat for a union.
+            items:
+              enum:
+                - pending
+                - running
+                - succeeded
+                - failed
+              type: string
+            type:
+              - array
+              - "null"
+        - explode: false
+          in: query
+          name: limit
+          schema:
+            default: 100
+            format: int64
+            maximum: 500
+            minimum: 1
+            type: integer
+      responses:
+        "200":
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ListOpsOutputBody"
+          description: OK
+        default:
+          content:
+            application/problem+json:
+              schema:
+                $ref: "#/components/schemas/ErrorModel"
+          description: Error
+      summary: Get API v1 resources by kind by name ops
+    post:
+      operationId: post-api-v1-resources-by-kind-by-name-ops
+      parameters:
+        - description: Resource kind.
+          in: path
+          name: kind
+          required: true
+          schema:
+            description: Resource kind.
+            type: string
+        - description: Resource name; identity together with kind.
+          in: path
+          name: name
+          required: true
+          schema:
+            description: Resource name; identity together with kind.
+            type: string
+      requestBody:
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/InvokeOpInputBody"
+        required: true
+      responses:
+        "202":
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/OperationDTO"
+          description: Accepted
+        default:
+          content:
+            application/problem+json:
+              schema:
+                $ref: "#/components/schemas/ErrorModel"
+          description: Error
+      summary: Post API v1 resources by kind by name ops
+  /api/v1/resources/{kind}/{name}/ops/{op_uid}:
+    get:
+      operationId: get-api-v1-resources-by-kind-by-name-ops-by-op-uid
+      parameters:
+        - description: Resource kind.
+          in: path
+          name: kind
+          required: true
+          schema:
+            description: Resource kind.
+            type: string
+        - description: Resource name; identity together with kind.
+          in: path
+          name: name
+          required: true
+          schema:
+            description: Resource name; identity together with kind.
+            type: string
+        - description: Opaque operation handle.
+          in: path
+          name: op_uid
+          required: true
+          schema:
+            description: Opaque operation handle.
+            type: string
+      responses:
+        "200":
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/OperationDTO"
+          description: OK
+        default:
+          content:
+            application/problem+json:
+              schema:
+                $ref: "#/components/schemas/ErrorModel"
+          description: Error
+      summary: Get API v1 resources by kind by name ops by op UID
+  /api/v1/resources/{kind}/{name}/quarantine:
+    post:
+      operationId: post-api-v1-resources-by-kind-by-name-quarantine
+      parameters:
+        - description: Resource kind.
+          in: path
+          name: kind
+          required: true
+          schema:
+            description: Resource kind.
+            type: string
+        - description: Resource name; identity together with kind.
+          in: path
+          name: name
+          required: true
+          schema:
+            description: Resource name; identity together with kind.
+            type: string
+      responses:
+        "200":
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/QuarantineOutputBody"
+          description: OK
+        default:
+          content:
+            application/problem+json:
+              schema:
+                $ref: "#/components/schemas/ErrorModel"
+          description: Error
+      summary: Post API v1 resources by kind by name quarantine
+  /api/v1/resources/{kind}/{name}/reconcile:
+    post:
+      operationId: post-api-v1-resources-by-kind-by-name-reconcile
+      parameters:
+        - description: Resource kind.
+          in: path
+          name: kind
+          required: true
+          schema:
+            description: Resource kind.
+            type: string
+        - description: Resource name; identity together with kind.
+          in: path
+          name: name
+          required: true
+          schema:
+            description: Resource name; identity together with kind.
+            type: string
+      responses:
+        "202":
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ReconcileOutputBody"
+          description: Accepted
+        default:
+          content:
+            application/problem+json:
+              schema:
+                $ref: "#/components/schemas/ErrorModel"
+          description: Error
+      summary: Post API v1 resources by kind by name reconcile
+  /api/v1/resources/{kind}/{name}/rollback:
+    post:
+      operationId: post-api-v1-resources-by-kind-by-name-rollback
+      parameters:
+        - description: Resource kind.
+          in: path
+          name: kind
+          required: true
+          schema:
+            description: Resource kind.
+            type: string
+        - description: Resource name; identity together with kind.
+          in: path
+          name: name
+          required: true
+          schema:
+            description: Resource name; identity together with kind.
+            type: string
+      requestBody:
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/RollbackInputBody"
+        required: true
+      responses:
+        "200":
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/RollbackOutputBody"
+          description: OK
+        default:
+          content:
+            application/problem+json:
+              schema:
+                $ref: "#/components/schemas/ErrorModel"
+          description: Error
+      summary: Post API v1 resources by kind by name rollback
+  /api/v1/resources/{kind}/{name}/spec-history:
+    get:
+      operationId: get-api-v1-resources-by-kind-by-name-spec-history
+      parameters:
+        - description: Resource kind.
+          in: path
+          name: kind
+          required: true
+          schema:
+            description: Resource kind.
+            type: string
+        - description: Resource name; identity together with kind.
+          in: path
+          name: name
+          required: true
+          schema:
+            description: Resource name; identity together with kind.
+            type: string
+        - explode: false
+          in: query
+          name: limit
+          schema:
+            default: 50
+            format: int64
+            maximum: 200
+            minimum: 1
+            type: integer
+      responses:
+        "200":
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ListSpecHistoryOutputBody"
+          description: OK
+        default:
+          content:
+            application/problem+json:
+              schema:
+                $ref: "#/components/schemas/ErrorModel"
+          description: Error
+      summary: Get API v1 resources by kind by name spec history
+  /api/v1/resources/{kind}/{name}/subgraph:
+    get:
+      operationId: get-api-v1-resources-by-kind-by-name-subgraph
+      parameters:
+        - description: Resource kind.
+          in: path
+          name: kind
+          required: true
+          schema:
+            description: Resource kind.
+            type: string
+        - description: Resource name; identity together with kind.
+          in: path
+          name: name
+          required: true
+          schema:
+            description: Resource name; identity together with kind.
+            type: string
+        - explode: false
+          in: query
+          name: ancestor_depth
+          schema:
+            default: 3
+            format: int64
+            maximum: 10
+            minimum: 0
+            type: integer
+        - explode: false
+          in: query
+          name: descendant_depth
+          schema:
+            default: 1
+            format: int64
+            maximum: 10
+            minimum: 0
+            type: integer
+        - explode: false
+          in: query
+          name: limit
+          schema:
+            default: 200
+            format: int64
+            maximum: 1000
+            minimum: 1
+            type: integer
+      responses:
+        "200":
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/SubgraphOutputBody"
+          description: OK
+        default:
+          content:
+            application/problem+json:
+              schema:
+                $ref: "#/components/schemas/ErrorModel"
+          description: Error
+      summary: Get API v1 resources by kind by name subgraph
+  /api/v1/resources/{kind}/{name}/summary:
+    get:
+      operationId: get-api-v1-resources-by-kind-by-name-summary
+      parameters:
+        - description: Resource kind.
+          in: path
+          name: kind
+          required: true
+          schema:
+            description: Resource kind.
+            type: string
+        - description: Resource name; identity together with kind.
+          in: path
+          name: name
+          required: true
+          schema:
+            description: Resource name; identity together with kind.
+            type: string
+      responses:
+        "200":
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/SummaryOutputBody"
+          description: OK
+        default:
+          content:
+            application/problem+json:
+              schema:
+                $ref: "#/components/schemas/ErrorModel"
+          description: Error
+      summary: Get API v1 resources by kind by name summary
+  /api/v1/resources/{kind}/{name}/topology:
+    get:
+      operationId: get-api-v1-resources-by-kind-by-name-topology
+      parameters:
+        - description: Resource kind.
+          in: path
+          name: kind
+          required: true
+          schema:
+            description: Resource kind.
+            type: string
+        - description: Resource name; identity together with kind.
+          in: path
+          name: name
+          required: true
+          schema:
+            description: Resource name; identity together with kind.
+            type: string
+        - explode: true
+          in: query
+          name: group_by
+          schema:
+            items:
+              type: string
+            type:
+              - array
+              - "null"
+        - description: key:value pairs already drilled.
+          explode: true
+          in: query
+          name: path
+          schema:
+            description: key:value pairs already drilled.
+            items:
+              type: string
+            type:
+              - array
+              - "null"
+        - explode: false
+          in: query
+          name: cursor
+          schema:
+            type: string
+        - explode: false
+          in: query
+          name: limit
+          schema:
+            default: 200
+            format: int64
+            maximum: 500
+            minimum: 1
+            type: integer
+      responses:
+        "200":
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/TopologyOutputBody"
+          description: OK
+          headers:
+            X-Next-Cursor:
+              schema:
+                type: string
+            X-Total:
+              schema:
+                type: string
+        default:
+          content:
+            application/problem+json:
+              schema:
+                $ref: "#/components/schemas/ErrorModel"
+          description: Error
+      summary: Get API v1 resources by kind by name topology
+  /api/v1/resources/{kind}/{name}/topology/keys:
+    get:
+      operationId: get-api-v1-resources-by-kind-by-name-topology-keys
+      parameters:
+        - description: Resource kind.
+          in: path
+          name: kind
+          required: true
+          schema:
+            description: Resource kind.
+            type: string
+        - description: Resource name; identity together with kind.
+          in: path
+          name: name
+          required: true
+          schema:
+            description: Resource name; identity together with kind.
+            type: string
+        - explode: false
+          in: query
+          name: limit
+          schema:
+            default: 100
+            format: int64
+            maximum: 500
+            minimum: 1
+            type: integer
+      responses:
+        "200":
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/TopologyKeysOutputBody"
+          description: OK
+        default:
+          content:
+            application/problem+json:
+              schema:
+                $ref: "#/components/schemas/ErrorModel"
+          description: Error
+      summary: Get API v1 resources by kind by name topology keys
+  /api/v1/resources/{kind}/{name}/topology/leaves:
+    get:
+      operationId: get-api-v1-resources-by-kind-by-name-topology-leaves
+      parameters:
+        - description: Resource kind.
+          in: path
+          name: kind
+          required: true
+          schema:
+            description: Resource kind.
+            type: string
+        - description: Resource name; identity together with kind.
+          in: path
+          name: name
+          required: true
+          schema:
+            description: Resource name; identity together with kind.
+            type: string
+        - explode: true
+          in: query
+          name: path
+          schema:
+            items:
+              type: string
+            type:
+              - array
+              - "null"
+        - explode: false
+          in: query
+          name: cursor
+          schema:
+            type: string
+        - explode: false
+          in: query
+          name: limit
+          schema:
+            default: 200
+            format: int64
+            maximum: 500
+            minimum: 1
+            type: integer
+      responses:
+        "200":
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/TopologyLeavesOutputBody"
+          description: OK
+          headers:
+            X-Next-Cursor:
+              schema:
+                type: string
+        default:
+          content:
+            application/problem+json:
+              schema:
+                $ref: "#/components/schemas/ErrorModel"
+          description: Error
+      summary: Get API v1 resources by kind by name topology leaves
+  /api/v1/resources/{kind}/{name}/unquarantine:
+    post:
+      operationId: post-api-v1-resources-by-kind-by-name-unquarantine
+      parameters:
+        - description: Resource kind.
+          in: path
+          name: kind
+          required: true
+          schema:
+            description: Resource kind.
+            type: string
+        - description: Resource name; identity together with kind.
+          in: path
+          name: name
+          required: true
+          schema:
+            description: Resource name; identity together with kind.
+            type: string
+      responses:
+        "200":
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/QuarantineOutputBody"
+          description: OK
+        default:
+          content:
+            application/problem+json:
+              schema:
+                $ref: "#/components/schemas/ErrorModel"
+          description: Error
+      summary: Post API v1 resources by kind by name unquarantine
+  /api/v1/version:
+    get:
+      operationId: get-api-v1-version
+      responses:
+        "200":
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/VersionOutputBody"
+          description: OK
+        default:
+          content:
+            application/problem+json:
+              schema:
+                $ref: "#/components/schemas/ErrorModel"
+          description: Error
+      summary: Get API v1 version

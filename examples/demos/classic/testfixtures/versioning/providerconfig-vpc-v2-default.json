@@ -1,0 +1,10 @@
+{
+  "kind": "vpc",
+  "kind_version": 2,
+  "name": "vpc-v2-default",
+  "is_default": true,
+  "spec": {
+    "flow_logs_bucket": "s3://acme-flowlogs-v2",
+    "default_region": "us-west-2"
+  }
+}

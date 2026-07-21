@@ -1,0 +1,35 @@
+{
+  "kind": "fakevpc",
+  "kind_version": 1,
+  "max_transient_attempts": 20,
+  "description": "fakevpc/v1 — Simulation leaf that PRODUCES an id: on reconcile it derives a deterministic fake vpc_id from spec.account_id and writes it to status. The upstream half of a dependency + value-flow demo (consumer = fakeapp); a composer emits a ValueFlow from this status.vpc_id into a downstream's spec.",
+  "spec_schema": {
+    "type": "object",
+    "additionalProperties": true,
+    "properties": {
+      "account_id": {
+        "type": "string",
+        "description": "Account this fake VPC lives in; the produced vpc_id is derived from it."
+      }
+    }
+  },
+  "status_schema": {
+    "type": "object",
+    "additionalProperties": true,
+    "properties": {
+      "vpc_id": {
+        "type": "string",
+        "description": "The produced VPC id downstream resources consume via a ValueFlow."
+      }
+    }
+  },
+  "reactions": [
+    {
+      "name": "work",
+      "trigger": "specChange",
+      "emits": [
+        "status"
+      ]
+    }
+  ]
+}

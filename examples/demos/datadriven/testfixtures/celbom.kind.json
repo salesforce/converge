@@ -1,0 +1,194 @@
+{
+  "kind": "celbom",
+  "kind_version": 1,
+  "max_transient_attempts": 20,
+  "description": "celbom/v1 — Declarative-rules composer: the BOM of teams x a rule set generates the children DAG. Unlike stdstarlark (a Starlark PROGRAM in the bundle), celbom's composition is RULE DATA + one-line CEL `when` predicates in the providerconfig SPEC \u2014 structured, queryable, validatable config, not an opaque blob. The fan-out loop is fixed Go; CEL (non-Turing-complete) is only the per-rule team selector. Editing a rule is a config edit + recompose, no converge redeploy.",
+  "spec_schema": {
+    "additionalProperties": true,
+    "type": "object",
+    "properties": {
+      "deployment_instance": {
+        "type": "object",
+        "additionalProperties": true,
+        "properties": {
+          "name": {
+            "type": "string",
+            "minLength": 1,
+            "description": "Deployment instance name; the prefix for composed child names."
+          },
+          "functional_domains": {
+            "type": "array",
+            "items": {
+              "type": "object",
+              "additionalProperties": true,
+              "properties": {
+                "name": {
+                  "type": "string",
+                  "minLength": 1
+                },
+                "service_teams": {
+                  "type": "array",
+                  "items": {
+                    "type": "object",
+                    "additionalProperties": true,
+                    "properties": {
+                      "name": {
+                        "type": "string",
+                        "minLength": 1
+                      }
+                    },
+                    "required": [
+                      "name"
+                    ]
+                  }
+                }
+              },
+              "required": [
+                "name"
+              ]
+            }
+          }
+        },
+        "required": [
+          "name"
+        ]
+      }
+    },
+    "required": [
+      "deployment_instance"
+    ]
+  },
+  "config_schema": {
+    "type": "object",
+    "additionalProperties": false,
+    "description": "The DECLARATIVE rule set. Each rule selects teams by a CEL `when` predicate over the `team` variable {fd, name} and stamps out a child from a template. This is plain queryable JSON in the providerconfig spec \u2014 the point of the CEL approach vs an opaque program.",
+    "properties": {
+      "rules": {
+        "type": "array",
+        "items": {
+          "type": "object",
+          "additionalProperties": false,
+          "properties": {
+            "name": {
+              "type": "string",
+              "description": "Rule name; also the ${name} placeholder + the child's spec.policy."
+            },
+            "when": {
+              "type": "string",
+              "description": "CEL boolean over `team` {fd, name}, e.g. team.fd == \"fd-00\". Empty = always."
+            },
+            "child": {
+              "type": "object",
+              "additionalProperties": false,
+              "properties": {
+                "kind": {
+                  "type": "string",
+                  "description": "Child resource kind to compose (must have an applied CRD)."
+                },
+                "kind_version": {
+                  "type": "integer",
+                  "minimum": 1,
+                  "description": "Child web-API version (v1, v2, \u2026). REQUIRED \u2014 no implicit v1 default."
+                },
+                "name": {
+                  "type": "string",
+                  "description": "Child name template; ${name} (rule) + ${fd} + ${team}, e.g. cel-${fd}-${team}."
+                },
+                "spec": {
+                  "type": "object",
+                  "additionalProperties": true,
+                  "description": "Optional LITERAL spec fields baked into the child \u2014 the team-specific inputs a kind needs beyond the (fd, team) identity, e.g. a faketerraform's {\"tar_url\": \"s3://.../base.tar\"} or a fakek8sjob's {\"image\": \"nginx:1.27\"}. Merged onto the identity (literal wins); string values support ${fd}/${team}/${name}."
+                }
+              },
+              "required": [
+                "kind",
+                "kind_version",
+                "name"
+              ]
+            },
+            "depends_on": {
+              "type": "array",
+              "description": "Optional: zero or more UPSTREAM children (per team) this rule's child depends on; each emits a DepEdge carrying value flows. The engine schedules the upstreams first and flows their statuses into the child's spec before the child runs.",
+              "items": {
+                "type": "object",
+                "additionalProperties": false,
+                "description": "One upstream dependency + its value flows.",
+                "properties": {
+                  "kind": {
+                    "type": "string",
+                    "description": "Upstream child kind (must have an applied CRD)."
+                  },
+                  "kind_version": {
+                    "type": "integer",
+                    "minimum": 1,
+                    "description": "Child web-API version (v1, v2, \u2026). REQUIRED \u2014 no implicit v1 default."
+                  },
+                  "name": {
+                    "type": "string",
+                    "description": "Upstream child name template; same placeholders as child.name."
+                  },
+                  "spec": {
+                    "type": "object",
+                    "additionalProperties": true,
+                    "description": "Optional LITERAL spec fields for the upstream (same semantics as child.spec), e.g. a faketerraform upstream's tar_url. The flowed field this upstream PRODUCES is left absent."
+                  },
+                  "flow": {
+                    "type": "array",
+                    "description": "Value flows: each fills the dependent's spec[to] from the upstream's status[from]. Fields are JSON Pointers (\"/vpc_id\").",
+                    "items": {
+                      "type": "object",
+                      "additionalProperties": false,
+                      "properties": {
+                        "from": {
+                          "type": "string",
+                          "description": "Upstream status field (JSON Pointer)."
+                        },
+                        "to": {
+                          "type": "string",
+                          "description": "Dependent spec field (JSON Pointer)."
+                        }
+                      },
+                      "required": [
+                        "from",
+                        "to"
+                      ]
+                    }
+                  }
+                },
+                "required": [
+                  "kind",
+                  "kind_version",
+                  "name"
+                ]
+              }
+            }
+          },
+          "required": [
+            "name",
+            "child"
+          ]
+        }
+      }
+    },
+    "required": [
+      "rules"
+    ]
+  },
+  "status_schema": {
+    "additionalProperties": true,
+    "type": "object"
+  },
+  "reactions": [
+    {
+      "name": "compose",
+      "trigger": "specChange",
+      "emits": [
+        "children",
+        "status",
+        "conditions"
+      ]
+    }
+  ],
+  "resync_interval_secs": 300,
+  "resync_recomposes": true
+}

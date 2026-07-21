@@ -1,0 +1,67 @@
+{
+  "name": "stdcel-graph",
+  "kind": "stdcel",
+  "kind_version": 1,
+  "is_default": false,
+  "spec": {
+    "resources": [
+      {
+        "id": "vpc",
+        "template": {
+          "kind": "fakevpc",
+          "kind_version": 1,
+          "name": "kro-${schema.spec.fd}-${schema.spec.team}-vpc",
+          "spec": {
+            "account_id": "${schema.spec.account}"
+          }
+        }
+      },
+      {
+        "id": "db",
+        "template": {
+          "kind": "fakedb",
+          "kind_version": 1,
+          "name": "kro-${schema.spec.fd}-${schema.spec.team}-db",
+          "spec": {
+            "account_id": "${schema.spec.account}"
+          }
+        }
+      },
+      {
+        "id": "app",
+        "template": {
+          "kind": "fakeapp",
+          "kind_version": 1,
+          "name": "kro-${schema.spec.fd}-${schema.spec.team}-app",
+          "spec": {
+            "vpc_id": "${vpc.status.vpc_id}",
+            "db_endpoint": "${db.status.db_endpoint}"
+          }
+        }
+      },
+      {
+        "id": "tf",
+        "template": {
+          "kind": "faketerraform",
+          "kind_version": 1,
+          "name": "kro-${schema.spec.fd}-${schema.spec.team}-tf",
+          "spec": {
+            "tar_url": "s3://team-bundles/${schema.spec.team}.tar"
+          }
+        }
+      },
+      {
+        "id": "job",
+        "template": {
+          "kind": "fakek8sjob",
+          "kind_version": 1,
+          "name": "kro-${schema.spec.fd}-${schema.spec.team}-job",
+          "spec": {
+            "image": "${schema.spec.image}",
+            "built_image": "${tf.status.image_tag}"
+          }
+        }
+      }
+    ]
+  }
+}

@@ -1,0 +1,9 @@
+{
+  "kind": "vpc",
+  "kind_version": 1,
+  "name": "vpc-v1-default",
+  "is_default": true,
+  "spec": {
+    "flow_logs_bucket": "s3://acme-flowlogs-v1"
+  }
+}

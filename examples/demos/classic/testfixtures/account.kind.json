@@ -1,0 +1,57 @@
+{
+  "kind": "account",
+  "kind_version": 1,
+  "max_transient_attempts": 20,
+  "description": "account/v1 — A cloud account owned by a single team. Has no upstream dependencies.",
+  "spec_schema": {
+    "additionalProperties": false,
+    "properties": {
+      "email": {
+        "description": "Root-account contact email.",
+        "type": "string"
+      },
+      "team_name": {
+        "description": "Owner team name; appears in tags.",
+        "minLength": 1,
+        "type": "string"
+      }
+    },
+    "required": [
+      "team_name",
+      "email"
+    ],
+    "type": "object"
+  },
+  "status_schema": {
+    "additionalProperties": false,
+    "properties": {
+      "account_id": {
+        "description": "Provider-issued 12-digit account id.",
+        "type": "string"
+      }
+    },
+    "required": [
+      "account_id"
+    ],
+    "type": "object"
+  },
+  "reactions": [
+    {
+      "name": "work",
+      "trigger": "specChange",
+      "emits": [
+        "status"
+      ]
+    },
+    {
+      "name": "teardown",
+      "trigger": "deleteRequested",
+      "emits": [
+        "finalizer"
+      ],
+      "finalizer": "classic.demo/account"
+    }
+  ],
+  "finalizer_name": "classic.demo/account",
+  "orphan_grace_secs": 30
+}
