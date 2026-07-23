@@ -96,17 +96,28 @@ jobs:
         run: just vuln
 
   # Integration lane: the FULL `just test` — the base ./test suite PLUS the
-  # broker/worker chaos, control-plane HA, and streaming-replica soak, all four phases
-  # running CONCURRENTLY (each with its OWN Postgres testcontainer + fleet). Runs on the
-  # org-provided `salesforce-Ubuntu` runner (the free GitHub-hosted 2-vCPU runner can't
-  # hold four fleets + four Postgres containers without thrashing / flaky chaos budgets).
-  # The suite needs Docker for the testcontainers, so a preflight fails fast with a clear
+  # broker/worker chaos, control-plane HA, and streaming-replica soak. Runs on the
+  # org-provided `salesforce-Ubuntu` runner, but SERIALLY (SERIAL=1): the runner is
+  # ~2 vCPU, so the four phases running concurrently (each its OWN fleet + Postgres
+  # testcontainer) starve each other and time out. One phase at a time gives each the
+  # whole runner. The per-phase timeouts + chaos budget are raised via env (the recipe
+  # reads TEST_TIMEOUT_*/CHAOS_BUDGET) because a slow runner is throughput-bound. The
+  # suite needs Docker for the testcontainers, so a preflight fails fast with a clear
   # message if this runner has no Docker daemon (org runners don't always ship one).
   integration:
     runs-on: salesforce-Ubuntu
-    # Backstop above the recipe's per-phase timeouts (max phase is 15m; concurrent, so
-    # wall-clock ~= slowest phase + cold image pull) in case a runner wedges.
-    timeout-minutes: 40
+    env:
+      SERIAL: "1"
+      # Roomier than the dev-box defaults (600s/15m/15m/10m, 8m budget) for the slow
+      # runner. Serial, so wall-clock is the SUM — the outer timeout below covers it.
+      TEST_TIMEOUT_BASE: "30m"
+      TEST_TIMEOUT_CHAOS: "20m"
+      TEST_TIMEOUT_HA: "20m"
+      TEST_TIMEOUT_REPL: "15m"
+      CHAOS_BUDGET: "12m"
+    # Outer backstop above the SUM of the serial per-phase timeouts (30+20+20+15 = 85m)
+    # plus a cold image pull, in case a phase wedges rather than failing cleanly.
+    timeout-minutes: 90
     steps:
       - uses: actions/checkout@v4
       # Fail fast + legibly if the runner has no Docker daemon (the testcontainers need it).

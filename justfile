@@ -335,9 +335,11 @@ submit-boms count="5" ports="8080 8081 8082" bom="examples/demos/classic/testfix
 #   - the dev launchers (-dev / -dev-multipod / -dev-db / -dev-db-single) — interactive,
 #     run via `just dev*` / `just dev-db`
 # -v streams per-test progress; the timeouts leave headroom for a cold image pull +
-# the chaos/HA budgets. Chaos uses -chaos-scenario=all so one pass covers every fault
-# class (kill/drain/join/leave, network, db, rollout); bump to =worker|rollout|… or add
-# a second -chaos-seed for a deeper local soak.
+# the chaos/HA budgets, and each is env-overridable (TEST_TIMEOUT_BASE/_CHAOS/_HA/_REPL,
+# CHAOS_BUDGET) so a slower CI runner can raise them without editing this recipe. Chaos
+# uses -chaos-scenario=all so one pass covers every fault class (kill/drain/join/leave,
+# network, db, rollout); bump to =worker|rollout|… or add a second -chaos-seed for a
+# deeper local soak.
 [doc("run the integration suite + chaos + HA + replica CONCURRENTLY (SERIAL=1 for one-at-a-time)")]
 test:
     #!/usr/bin/env bash
@@ -357,10 +359,19 @@ test:
       if [ "$rc" = 0 ]; then echo "── PASS  ${name} ──"; else echo "── FAIL  ${name} (exit ${rc}) ──"; fi
       return "$rc"
     }
-    p_base() { run_one base-suite     "$tmp/base.log"  go test -count=1 -timeout 600s -v ./test/; }
-    p_chaos(){ run_one broker-chaos   "$tmp/chaos.log" go test -count=1 -timeout 15m -v ./test/ -run '^TestBrokerChaos$'     -args -chaos -chaos-scenario=all -chaos-workload=noop -chaos-budget=8m; }
-    p_ha()   { run_one control-ha     "$tmp/ha.log"    go test -count=1 -timeout 15m -v ./test/ -run '^TestControlPlaneHA$'   -args -chaos-ha; }
-    p_repl() { run_one stream-replica "$tmp/repl.log"  go test -count=1 -timeout 10m -v ./test/ -run '^TestStreamingReplica$' -args -stress-replica; }
+    # Per-phase go-test timeouts + the chaos convergence budget. The defaults are sized
+    # for a dev box; a slower shared CI runner (2 vCPU) is throughput-bound and needs
+    # more headroom, so each is overridable by env (e.g. TEST_TIMEOUT_BASE=30m) without
+    # editing this recipe — CI sets larger values, local runs keep the fast defaults.
+    tb="${TEST_TIMEOUT_BASE:-600s}"      # base ./test suite
+    tc="${TEST_TIMEOUT_CHAOS:-15m}"      # broker/worker chaos soak
+    tha="${TEST_TIMEOUT_HA:-15m}"        # control-plane HA
+    tr="${TEST_TIMEOUT_REPL:-10m}"       # streaming replica
+    cb="${CHAOS_BUDGET:-8m}"             # chaos convergence budget (-chaos-budget)
+    p_base() { run_one base-suite     "$tmp/base.log"  go test -count=1 -timeout "$tb"  -v ./test/; }
+    p_chaos(){ run_one broker-chaos   "$tmp/chaos.log" go test -count=1 -timeout "$tc"  -v ./test/ -run '^TestBrokerChaos$'     -args -chaos -chaos-scenario=all -chaos-workload=noop -chaos-budget="$cb"; }
+    p_ha()   { run_one control-ha     "$tmp/ha.log"    go test -count=1 -timeout "$tha" -v ./test/ -run '^TestControlPlaneHA$'   -args -chaos-ha; }
+    p_repl() { run_one stream-replica "$tmp/repl.log"  go test -count=1 -timeout "$tr"  -v ./test/ -run '^TestStreamingReplica$' -args -stress-replica; }
     phases="base:$tmp/base.log chaos:$tmp/chaos.log ha:$tmp/ha.log repl:$tmp/repl.log"
 
     fail=0
