@@ -126,35 +126,50 @@ jobs:
     timeout-minutes: 90
     steps:
       - uses: actions/checkout@v4
-      # Preflight: prove the testcontainers PATTERN works on this runner BEFORE the
-      # 30m suite — not just that a daemon exists, but that a mapped container port is
-      # reachable from the host (the exact thing the harness's pgxpool needs). If this
-      # fails or hangs, Postgres testcontainers are broken on the runner (Docker
-      # networking / DinD / socket), not the code — and we learn it in seconds.
+      # Preflight: isolate WHERE Postgres testcontainers break on this runner, in four
+      # separately-timed stages, so a hang is attributed to the exact cause instead of
+      # wedging the 30m suite. The stages mirror what the Go harness's postgres.Run does:
+      #   1. daemon reachable   2. image PULL (the prime suspect — a blocked/rate-limited
+      #   Docker Hub on a corporate runner hangs here, which is ALSO why the real suite
+      #   wedged on pgxpool.Acquire: the image never pulls, so the DB never starts)
+      #   3. container starts   4. the HOST-mapped port is reachable (networking).
       - name: preflight — Docker + testcontainer networking
-        timeout-minutes: 3
+        timeout-minutes: 5
         run: |
+          set -u
           if ! docker info >/dev/null 2>&1; then
-            echo "::error::No reachable Docker daemon; the integration suite needs Docker for the Postgres testcontainers."
+            echo "::error::No reachable Docker daemon."
             exit 1
           fi
           docker version
-          echo "── starting a throwaway postgres and probing the mapped port from the host ──"
+
+          echo "── stage 2: pull postgres:16-alpine (120s cap) — the suite pulls the same image ──"
+          if ! timeout 120 docker pull postgres:16-alpine; then
+            echo "::error::docker pull of postgres:16-alpine failed or timed out — this runner likely cannot reach Docker Hub (firewall / rate limit). The real suite wedges for the same reason. Fix: a registry mirror, or pre-pull the image onto the runner, or point the harness image at an internal mirror."
+            echo "── registry reachability probe ──"
+            timeout 15 docker pull hello-world && echo "hello-world pulled OK (so postgres/tag specifically is the issue)" || echo "even hello-world failed → Docker Hub is unreachable from this runner"
+            exit 1
+          fi
+          echo "pull OK"
+
+          echo "── stage 3: start the container ──"
           cid=$(docker run -d -e POSTGRES_PASSWORD=probe -P postgres:16-alpine)
           trap 'docker rm -f "$cid" >/dev/null 2>&1 || true' EXIT
           hostport=$(docker port "$cid" 5432/tcp | head -1)
           echo "container 5432 mapped to: $hostport"
+
+          echo "── stage 4: probe the host-mapped port (the exact thing pgxpool does) ──"
+          ok=0
           for i in $(seq 1 30); do
-            if docker exec "$cid" pg_isready -U postgres >/dev/null 2>&1; then
-              echo "pg_isready ok after ${i}s"; break
-            fi
+            if docker exec "$cid" pg_isready -U postgres >/dev/null 2>&1; then echo "pg_isready ok after ${i}s"; ok=1; break; fi
             sleep 1
           done
-          # The real test the harness does: connect to the HOST-mapped port.
-          if command -v pg_isready >/dev/null 2>&1; then
-            pg_isready -h "${hostport%:*}" -p "${hostport##*:}" || { echo "::error::mapped port unreachable from host — testcontainer networking is broken on this runner"; exit 1; }
+          [ "$ok" = 1 ] || { echo "::error::postgres never became ready inside the container"; docker logs "$cid" | tail -20; exit 1; }
+          if (exec 3<>"/dev/tcp/${hostport%:*}/${hostport##*:}") 2>/dev/null; then
+            echo "host TCP connect to mapped port OK — testcontainer networking works"
           else
-            (exec 3<>"/dev/tcp/${hostport%:*}/${hostport##*:}") 2>/dev/null && echo "host TCP connect to mapped port ok" || { echo "::error::cannot TCP-connect to the mapped port from the host — testcontainer networking is broken on this runner"; exit 1; }
+            echo "::error::mapped port unreachable from host — testcontainer networking is broken (container-in-container / socket)."
+            exit 1
           fi
       - uses: actions/setup-go@v5
         with:
