@@ -18,7 +18,7 @@ permissions:
 
 jobs:
   release:
-    runs-on: ubuntu-latest
+    runs-on: salesforce-Ubuntu
     steps:
       # fetch-depth: 0 pulls the full tag history so the `git describe --tags` inside
       # `just build`/`just docker` resolves the exact release tag (e.g. v0.2.0) into

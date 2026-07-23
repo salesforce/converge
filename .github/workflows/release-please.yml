@@ -17,7 +17,7 @@ permissions:
 
 jobs:
   release-please:
-    runs-on: ubuntu-latest
+    runs-on: salesforce-Ubuntu
     steps:
       - uses: googleapis/release-please-action@v4
         with:

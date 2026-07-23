@@ -24,7 +24,7 @@ jobs:
   # linter, and the vulnerability scan. Runs in parallel with the integration job
   # so a lint failure surfaces without waiting on the (slower) testcontainer suite.
   verify:
-    runs-on: ubuntu-latest
+    runs-on: salesforce-Ubuntu
     steps:
       - uses: actions/checkout@v4
       # go-version-file reads the `go` + `toolchain` lines from go.mod, so the CI
@@ -75,8 +75,8 @@ jobs:
       # `just gen` regenerates sqlc → internal/dbq, the protos, the openapi/schema
       # goldens, and the conctl client. A nonzero diff means generated code was not
       # regenerated after a query/proto/schema/API change. NB: `just golden` spins a
-      # Postgres testcontainer for the schema golden, so this step needs Docker
-      # (present on ubuntu-latest runners).
+      # Postgres testcontainer for the schema golden, so this step needs Docker on the
+      # runner.
       - name: generated-code drift (just gen)
         run: |
           just gen
@@ -115,19 +115,47 @@ jobs:
       TEST_TIMEOUT_HA: "20m"
       TEST_TIMEOUT_REPL: "15m"
       CHAOS_BUDGET: "12m"
+      # Disable Ryuk — the testcontainers reaper sidecar. Ryuk needs a privileged
+      # socket + a host callback port and is the classic hang on locked-down org /
+      # self-hosted runners; a base-suite run that timed out at the FULL 30m (not slow,
+      # WEDGED on pgxpool.Acquire) points straight at it. The runner VM is torn down
+      # after the job, so leftover containers don't matter — Ryuk buys nothing here.
+      TESTCONTAINERS_RYUK_DISABLED: "true"
     # Outer backstop above the SUM of the serial per-phase timeouts (30+20+20+15 = 85m)
     # plus a cold image pull, in case a phase wedges rather than failing cleanly.
     timeout-minutes: 90
     steps:
       - uses: actions/checkout@v4
-      # Fail fast + legibly if the runner has no Docker daemon (the testcontainers need it).
-      - name: preflight — Docker available
+      # Preflight: prove the testcontainers PATTERN works on this runner BEFORE the
+      # 30m suite — not just that a daemon exists, but that a mapped container port is
+      # reachable from the host (the exact thing the harness's pgxpool needs). If this
+      # fails or hangs, Postgres testcontainers are broken on the runner (Docker
+      # networking / DinD / socket), not the code — and we learn it in seconds.
+      - name: preflight — Docker + testcontainer networking
+        timeout-minutes: 3
         run: |
           if ! docker info >/dev/null 2>&1; then
-            echo "::error::This runner has no reachable Docker daemon; the integration suite needs Docker for the Postgres testcontainers."
+            echo "::error::No reachable Docker daemon; the integration suite needs Docker for the Postgres testcontainers."
             exit 1
           fi
           docker version
+          echo "── starting a throwaway postgres and probing the mapped port from the host ──"
+          cid=$(docker run -d -e POSTGRES_PASSWORD=probe -P postgres:16-alpine)
+          trap 'docker rm -f "$cid" >/dev/null 2>&1 || true' EXIT
+          hostport=$(docker port "$cid" 5432/tcp | head -1)
+          echo "container 5432 mapped to: $hostport"
+          for i in $(seq 1 30); do
+            if docker exec "$cid" pg_isready -U postgres >/dev/null 2>&1; then
+              echo "pg_isready ok after ${i}s"; break
+            fi
+            sleep 1
+          done
+          # The real test the harness does: connect to the HOST-mapped port.
+          if command -v pg_isready >/dev/null 2>&1; then
+            pg_isready -h "${hostport%:*}" -p "${hostport##*:}" || { echo "::error::mapped port unreachable from host — testcontainer networking is broken on this runner"; exit 1; }
+          else
+            (exec 3<>"/dev/tcp/${hostport%:*}/${hostport##*:}") 2>/dev/null && echo "host TCP connect to mapped port ok" || { echo "::error::cannot TCP-connect to the mapped port from the host — testcontainer networking is broken on this runner"; exit 1; }
+          fi
       - uses: actions/setup-go@v5
         with:
           go-version-file: go.mod

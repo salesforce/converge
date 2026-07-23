@@ -13,7 +13,7 @@ permissions:
 
 jobs:
   lint-title:
-    runs-on: ubuntu-latest
+    runs-on: salesforce-Ubuntu
     steps:
       - uses: amannn/action-semantic-pull-request@v5
         env:
