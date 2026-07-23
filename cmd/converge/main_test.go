@@ -5,9 +5,52 @@ import (
 	"testing"
 	"time"
 
+	"github.com/jackc/pgx/v5/pgxpool"
+
 	"github.com/salesforce/converge/internal/engine"
 	"github.com/salesforce/converge/internal/runtime"
 )
+
+// TestApplyPoolHealthDefaultsFloorsMaxConns proves the pool never runs below
+// minPoolMaxConns when the operator left PG_POOL_MAX_CONNS unset — the fix for the
+// silent pool-exhaustion wedge, where pgx's own max(4, NumCPU) default on a small node
+// fell at/below the count of long-lived LISTEN subscribers a pod pins, so every working
+// query blocked forever in Acquire. An explicit env override always wins, even if lower.
+func TestApplyPoolHealthDefaultsFloorsMaxConns(t *testing.T) {
+	parse := func(t *testing.T) *pgxpool.Config {
+		t.Helper()
+		p, err := pgxpool.ParseConfig("postgres://u:p@localhost:5432/db?sslmode=disable")
+		if err != nil {
+			t.Fatalf("ParseConfig: %v", err)
+		}
+		return p
+	}
+
+	// Env unset + a low resolved MaxConns (simulating pgx's max(4,NumCPU) on a small
+	// node) → floored up to minPoolMaxConns.
+	low := parse(t)
+	low.MaxConns = 4
+	applyPoolHealthDefaults(low, Config{}, nil)
+	if low.MaxConns != minPoolMaxConns {
+		t.Errorf("env unset, MaxConns=4 → got %d, want floor %d", low.MaxConns, minPoolMaxConns)
+	}
+
+	// Env unset but the resolved value already clears the floor → left untouched.
+	high := parse(t)
+	high.MaxConns = 50
+	applyPoolHealthDefaults(high, Config{}, nil)
+	if high.MaxConns != 50 {
+		t.Errorf("env unset, MaxConns=50 → got %d, want 50 (floor must not lower it)", high.MaxConns)
+	}
+
+	// An explicit env override wins even below the floor — the operator owns the sizing.
+	override := parse(t)
+	override.MaxConns = 4
+	applyPoolHealthDefaults(override, Config{PgPoolMaxConns: 8}, nil)
+	if override.MaxConns != 8 {
+		t.Errorf("PG_POOL_MAX_CONNS=8 → got %d, want 8 (explicit override must win)", override.MaxConns)
+	}
+}
 
 // TestApplyDefaultsFillsZeroKnobs proves an operator who sets no env var gets the
 // SAME effective default the driver would apply — sourced from the owning

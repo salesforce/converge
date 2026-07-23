@@ -91,6 +91,13 @@ func main() {
 	}
 }
 
+// minPoolMaxConns is the floor applyPoolHealthDefaults enforces on the pgx pool's
+// MaxConns when the operator hasn't set PG_POOL_MAX_CONNS. It must exceed the number
+// of long-lived LISTEN subscribers a control+broker pod pins (~6-7; see the call site)
+// with clear headroom for working queries — pgx's own default of max(4, NumCPU) can
+// fall at or below the LISTEN count on a small node, which deadlocks the pool.
+const minPoolMaxConns int32 = 20
+
 // applyPoolHealthDefaults sets the connection-pool knobs that keep
 // dead connections from lingering after a Postgres restart, OOM kill,
 // or network blip:
@@ -127,6 +134,21 @@ func main() {
 func applyPoolHealthDefaults(p *pgxpool.Config, cfg Config, iam *awsauth.IAMAuthenticator) {
 	if cfg.PgPoolMaxConns > 0 {
 		p.MaxConns = int32(cfg.PgPoolMaxConns)
+	}
+	// Floor MaxConns so a pod NEVER runs with fewer connections than its long-lived
+	// LISTEN subscribers pin. pgx's default is max(4, runtime.NumCPU()); on a small
+	// node (≤4 vCPU) with PG_POOL_MAX_CONNS unset that yields as few as 4 — but a
+	// control+broker pod holds ~6-7 connections PERMANENTLY, one per active LISTEN
+	// (drainer outbox_ready + rollup_recheck, reactor lifecycle_ready, dispatcher
+	// work_ready, topology + mesh cluster_changed, notify_refresher). Each Listen
+	// Acquires a pooled conn and blocks on WaitForNotification for its lifetime
+	// (internal/runtime/listen.go), so if MaxConns ≤ the LISTEN count the LISTENers
+	// exhaust the pool and every working query blocks forever in Acquire — a silent
+	// wedge, no error logged. minPoolMaxConns keeps clear headroom above the LISTENers
+	// for working queries regardless of NumCPU. An explicit env override wins even if
+	// lower — an operator who sets PG_POOL_MAX_CONNS owns the sizing.
+	if cfg.PgPoolMaxConns == 0 && p.MaxConns < minPoolMaxConns {
+		p.MaxConns = minPoolMaxConns
 	}
 	if cfg.PgPoolMinConns > 0 {
 		p.MinConns = int32(cfg.PgPoolMinConns)

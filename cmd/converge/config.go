@@ -202,6 +202,8 @@ type Config struct {
 // pgx computes them from the host at ParseConfig time (max = max(4, numCPU)), so
 // there is no constant to mirror; run() reads the RESOLVED values back off the
 // parsed pool config into cfg before reporting (see the pool-build path).
+// applyPoolHealthDefaults then FLOORS MaxConns at minPoolMaxConns when the operator
+// left PG_POOL_MAX_CONNS unset, so a small-node pod can't run below its LISTEN count.
 func (c *Config) applyDefaults() {
 	if c.MemberHeartbeatEvery == 0 {
 		c.MemberHeartbeatEvery = runtime.DefaultMemberHeartbeatEvery
