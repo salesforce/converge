@@ -95,18 +95,15 @@ jobs:
       - name: vuln scan (govulncheck)
         run: just vuln
 
-  # Integration lane — INSTRUMENTED DIAGNOSTIC RUN (temporary): reproduce the
-  # salesforce-Ubuntu wedge and capture WHY. POOL_DEBUG=1 makes setupPostgres log the
-  # pgxpool sizing (default MaxConns = max(4, NumCPU) → only 4 on a 2-vCPU runner) plus
-  # live pool.Stat() every 3s, so a connection-pool exhaustion (a background loop stuck
-  # in pgxpool.Acquire, no error logged) shows up as AcquiredConns==Max with waiters.
-  # The base run streams -v so the full goroutine dump on timeout is captured (not the
-  # 40-line tail), and an on-failure step dumps pg_stat_activity (server-side view of
-  # what every connection is doing). Revert this whole block once diagnosed.
+  # Integration lane: the BASE ./test suite (the fast integration tests). The heavy
+  # chaos/HA/replica soak is NOT gated per-PR — run it locally (`just test`) or on-demand.
+  # Docker is preinstalled on the runner, so the Postgres testcontainers need no
+  # `services:` block. `-p 1` runs the package's tests one at a time (each spins its OWN
+  # fleet + Postgres pool) to cap DB/connection contention on a constrained box.
   integration:
     runs-on: salesforce-Ubuntu
-    env:
-      POOL_DEBUG: "1"
+    # 12m is well above the ~5m the base suite takes even CPU-constrained, so a clean
+    # run passes with margin while a genuine wedge still fails in bounded time.
     timeout-minutes: 15
     steps:
       - uses: actions/checkout@v4
@@ -136,33 +133,7 @@ jobs:
             sdk-ts/package-lock.json
             examples/demos/typescript/package-lock.json
 
-      # Base ./test suite, -v so the FULL goroutine dump lands in the log on timeout,
-      # POOL_DEBUG on. Tee to a file so the on-failure step can inspect/upload it.
-      - name: base integration suite (instrumented)
-        run: |
-          set -o pipefail
-          go test -count=1 -timeout 12m -p 1 -v ./test/ 2>&1 | tee /tmp/base.log
-
-      # On failure/hang, dump pg_stat_activity from every running postgres testcontainer
-      # — the server-side truth of what each connection is doing (active query vs idle-in-
-      # transaction vs waiting on a lock). This is what proves exhaustion vs a lock wait.
-      - name: on failure — dump pg_stat_activity
-        if: failure()
-        run: |
-          echo "── running postgres testcontainers ──"
-          for cid in $(docker ps --filter "ancestor=postgres:16-alpine" --format '{{.ID}}'); do
-            echo "═══ container $cid ═══"
-            docker exec "$cid" psql -U test -d orchestrator_test -c \
-              "select pid, state, wait_event_type, wait_event, now()-query_start as qtime, left(query,120) as query
-                 from pg_stat_activity where datname='orchestrator_test' order by qtime desc nulls last;" || true
-            echo "── connection count vs max_connections ──"
-            docker exec "$cid" psql -U test -d orchestrator_test -c \
-              "select count(*) as conns, current_setting('max_connections') as max_conns from pg_stat_activity;" || true
-          done
-      - name: on failure — upload full test log
-        if: failure()
-        uses: actions/upload-artifact@v4
-        with:
-          name: base-test-log
-          path: /tmp/base.log
-          if-no-files-found: warn
+      # The base ./test suite only (no -chaos/-chaos-ha/-stress-replica flags → those
+      # tests t.Skip). `-p 1` serializes the package's tests to cap DB contention.
+      - name: base integration suite
+        run: go test -count=1 -timeout 12m -p 1 ./test/

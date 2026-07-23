@@ -7,7 +7,6 @@ import (
 	"encoding/json"
 	"log/slog"
 	"os"
-	"runtime"
 	"testing"
 	"time"
 
@@ -44,36 +43,21 @@ func setupPostgres(t *testing.T, ctx context.Context) *pgxpool.Pool {
 	connStr, err := pgContainer.ConnectionString(ctx, "sslmode=disable")
 	require.NoError(t, err)
 
-	pool, err := pgxpool.New(ctx, connStr)
+	// Explicit MaxConns, CPU-INDEPENDENT. pgxpool's default is max(4, runtime.NumCPU()),
+	// which on a ≤4-CPU host (a shared CI runner) yields only 4 connections — fewer than
+	// this all-roles-in-one-process fleet's long-lived LISTEN subscribers (drainer
+	// outbox_ready + rollup_recheck, reactor lifecycle_ready, dispatcher work_ready,
+	// mesh/topology cluster_changed, …), each of which PINS a connection for its lifetime.
+	// With only 4, the LISTENers exhaust the pool and every other loop blocks forever in
+	// pgxpool.Acquire (a silent wedge, no error). 25 covers the LISTENers plus working
+	// headroom regardless of the runner's CPU count. (The chaos/HA/replica suites set
+	// their own larger caps for the same reason.)
+	poolCfg, err := pgxpool.ParseConfig(connStr)
+	require.NoError(t, err)
+	poolCfg.MaxConns = 25
+	pool, err := pgxpool.NewWithConfig(ctx, poolCfg)
 	require.NoError(t, err)
 	t.Cleanup(func() { pool.Close() })
-
-	// DIAGNOSTIC (env-gated, off by default): probe the connection-pool exhaustion
-	// hypothesis. pgxpool's default MaxConns is max(4, runtime.NumCPU()), so a 2-vCPU
-	// CI runner gets only 4 connections shared across every engine loop — a suspected
-	// silent wedge (a background sweeper blocks forever in pgxpool.Acquire with no error
-	// logged). Set POOL_DEBUG=1 to log the sizing once + live pool.Stat() every 3s so
-	// the fill-up (AcquiredConns==MaxConns with waiters) is visible in the run log.
-	if os.Getenv("POOL_DEBUG") == "1" {
-		slog.Warn("POOL_DEBUG: connection pool sizing",
-			"max_conns", pool.Config().MaxConns, "num_cpu", runtime.NumCPU())
-		go func() {
-			tk := time.NewTicker(3 * time.Second)
-			defer tk.Stop()
-			for {
-				select {
-				case <-ctx.Done():
-					return
-				case <-tk.C:
-					s := pool.Stat()
-					slog.Warn("POOL_DEBUG: pool.Stat",
-						"acquired", s.AcquiredConns(), "idle", s.IdleConns(),
-						"total", s.TotalConns(), "max", s.MaxConns(),
-						"acquire_waiting", s.EmptyAcquireCount(), "canceled_acquire", s.CanceledAcquireCount())
-				}
-			}
-		}()
-	}
 
 	return pool
 }
