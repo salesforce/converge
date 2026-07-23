@@ -60,11 +60,28 @@ func TestResyncRecomposeRespectsInterval(t *testing.T) {
 	)
 	require.NoError(t, err)
 
-	// Settle: root synced + composer stamped composed_gen to generation.
+	// Settle: root synced + composer stamped composed_gen to generation, AND the
+	// reconcile work_queue row is drained. The drain is load-bearing for step (2):
+	// requeue_for_resync excludes any row that still has a pending reconcile task (a
+	// row already being worked needn't be re-pended), so if we proceed while the
+	// engine's in-flight reconcile is still queued, the backdated row is (correctly)
+	// skipped and n=0 — a false failure on a slow box where the drainer hasn't caught
+	// up. Waiting for quiescence here makes step (2) deterministic regardless of runner
+	// speed. (This was the flake: on a fast box the row cleared before step 2; on a
+	// slow CI runner it didn't.)
 	require.Eventually(t, func() bool {
 		r, err := q.GetResourceInfo(ctx, rootID)
-		return err == nil && r.SyncedGen >= r.Generation
-	}, 20*time.Second, 100*time.Millisecond, "root should settle")
+		if err != nil || r.SyncedGen < r.Generation {
+			return false
+		}
+		var pending int
+		if err := pool.QueryRow(ctx,
+			`SELECT count(*) FROM work_queue WHERE resource_id = $1 AND task_type = 'reconcile'::task_type`,
+			rootID).Scan(&pending); err != nil {
+			return false
+		}
+		return pending == 0
+	}, 20*time.Second, 100*time.Millisecond, "root should settle and its reconcile work drain")
 	composedBefore := composedGenOf(t, ctx, pool, rootID)
 	require.Greater(t, composedBefore, int64(0), "composer should have stamped composed_gen")
 
