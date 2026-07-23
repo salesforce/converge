@@ -97,19 +97,26 @@ jobs:
 
   # Integration lane: the FULL `just test` — the base ./test suite PLUS the
   # broker/worker chaos, control-plane HA, and streaming-replica soak, all four phases
-  # running CONCURRENTLY (each with its OWN Postgres testcontainer + fleet). This needs
-  # a 4-vCPU runner: on the free 2-vCPU shared runner the four fleets + four containers
-  # thrash and the chaos fault budgets go flaky-red on infra, not code. `ubuntu-latest-4-cores`
-  # is a GitHub-hosted larger runner (4 vCPU / 16 GB) — it must be enabled for the org
-  # (Enterprise plan). If your org named its runner label differently, change it here.
-  # Docker is preinstalled on the hosted image, so the testcontainers need no `services:` block.
+  # running CONCURRENTLY (each with its OWN Postgres testcontainer + fleet). Runs on the
+  # org-provided `salesforce-Ubuntu` runner (the free GitHub-hosted 2-vCPU runner can't
+  # hold four fleets + four Postgres containers without thrashing / flaky chaos budgets).
+  # The suite needs Docker for the testcontainers, so a preflight fails fast with a clear
+  # message if this runner has no Docker daemon (org runners don't always ship one).
   integration:
-    runs-on: ubuntu-latest-4-cores
+    runs-on: salesforce-Ubuntu
     # Backstop above the recipe's per-phase timeouts (max phase is 15m; concurrent, so
     # wall-clock ~= slowest phase + cold image pull) in case a runner wedges.
     timeout-minutes: 40
     steps:
       - uses: actions/checkout@v4
+      # Fail fast + legibly if the runner has no Docker daemon (the testcontainers need it).
+      - name: preflight — Docker available
+        run: |
+          if ! docker info >/dev/null 2>&1; then
+            echo "::error::This runner has no reachable Docker daemon; the integration suite needs Docker for the Postgres testcontainers."
+            exit 1
+          fi
+          docker version
       - uses: actions/setup-go@v5
         with:
           go-version-file: go.mod
