@@ -1,0 +1,151 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="1280" height="760" viewBox="0 0 1280 760" font-family="-apple-system, BlinkMacSystemFont, 'Segoe UI', Helvetica, Arial, sans-serif">
+  <defs>
+    <radialGradient id="bg" cx="50%" cy="0%" r="120%">
+      <stop offset="0%" stop-color="#eef4ff"/>
+      <stop offset="55%" stop-color="#fbfcff"/>
+      <stop offset="100%" stop-color="#f6f8fc"/>
+    </radialGradient>
+    <linearGradient id="gControl" x1="0" y1="0" x2="0" y2="1">
+      <stop offset="0%" stop-color="#ffffff"/><stop offset="100%" stop-color="#eef2ff"/>
+    </linearGradient>
+    <linearGradient id="gBroker" x1="0" y1="0" x2="0" y2="1">
+      <stop offset="0%" stop-color="#ffffff"/><stop offset="100%" stop-color="#eff5ff"/>
+    </linearGradient>
+    <linearGradient id="gWorker" x1="0" y1="0" x2="0" y2="1">
+      <stop offset="0%" stop-color="#ffffff"/><stop offset="100%" stop-color="#e9fbf3"/>
+    </linearGradient>
+    <linearGradient id="gDb" x1="0" y1="0" x2="0" y2="1">
+      <stop offset="0%" stop-color="#ffffff"/><stop offset="100%" stop-color="#fff4e6"/>
+    </linearGradient>
+    <linearGradient id="gConverge" x1="0" y1="0" x2="1" y2="1">
+      <stop offset="0%" stop-color="#fbfdff"/><stop offset="100%" stop-color="#eff5ff"/>
+    </linearGradient>
+    <linearGradient id="gPool" x1="0" y1="0" x2="1" y2="1">
+      <stop offset="0%" stop-color="#fafefb"/><stop offset="100%" stop-color="#eefaf4"/>
+    </linearGradient>
+    <filter id="shadow" x="-20%" y="-20%" width="140%" height="160%">
+      <feDropShadow dx="0" dy="6" stdDeviation="10" flood-color="#1e293b" flood-opacity="0.10"/>
+    </filter>
+    <filter id="shadowSm" x="-30%" y="-30%" width="160%" height="180%">
+      <feDropShadow dx="0" dy="3" stdDeviation="5" flood-color="#1e293b" flood-opacity="0.10"/>
+    </filter>
+    <marker id="arr" viewBox="0 0 10 10" refX="8.5" refY="5" markerWidth="7.5" markerHeight="7.5" orient="auto-start-reverse">
+      <path d="M0,0 L10,5 L0,10 z" fill="#64748b"/>
+    </marker>
+    <marker id="arrV" viewBox="0 0 10 10" refX="8.5" refY="5" markerWidth="7.5" markerHeight="7.5" orient="auto-start-reverse">
+      <path d="M0,0 L10,5 L0,10 z" fill="#2563eb"/>
+    </marker>
+    <marker id="arrG" viewBox="0 0 10 10" refX="8.5" refY="5" markerWidth="7.5" markerHeight="7.5" orient="auto-start-reverse">
+      <path d="M0,0 L10,5 L0,10 z" fill="#10b981"/>
+    </marker>
+  </defs>
+
+  <rect width="1280" height="760" fill="url(#bg)"/>
+
+  <!-- title -->
+  <text x="60" y="56" font-size="30" font-weight="700" fill="#0f172a">Converge — topology</text>
+  <text x="60" y="82" font-size="15" fill="#64748b">A control plane for resources, on Postgres. Dumb workers carry all the provider code; the core stays kind-blind.</text>
+
+  <!-- ============ EDGES (under the cards) ============ -->
+  <g stroke-width="2.5" fill="none">
+    <!-- operator -> UI (vertical) -->
+    <path d="M 150 186 L 150 226" stroke="#64748b" marker-end="url(#arr)"/>
+    <!-- UI -> control plane (horizontal, REST) -->
+    <path d="M 240 262 L 372 262" stroke="#64748b" marker-end="url(#arr)"/>
+    <!-- control plane -> postgres (horizontal) -->
+    <path d="M 700 250 L 1004 200" stroke="#64748b" marker-end="url(#arr)" marker-start="url(#arr)"/>
+    <!-- broker -> postgres (horizontal) -->
+    <path d="M 700 372 L 1004 240" stroke="#2563eb" marker-end="url(#arrV)" marker-start="url(#arrV)"/>
+    <!-- worker <-> broker (single bidirectional Connect stream) -->
+    <path d="M 531 540 L 531 396" stroke="#10b981" marker-end="url(#arrV)" marker-start="url(#arrG)"/>
+    <!-- worker -> external (horizontal, right) -->
+    <path d="M 791 615 L 1004 615" stroke="#10b981" marker-end="url(#arrG)"/>
+  </g>
+
+  <!-- edge labels -->
+  <g font-size="12.5" fill="#475569">
+    <g transform="translate(306,257)"><rect x="-42" y="-12" width="84" height="18" rx="5" fill="#fff"/><text x="0" y="1" text-anchor="middle">REST · /api/v1</text></g>
+    <g transform="translate(840,210)"><rect x="-34" y="-12" width="68" height="18" rx="5" fill="#fff"/><text x="0" y="1" text-anchor="middle">schedule</text></g>
+    <g transform="translate(840,318)"><rect x="-62" y="-12" width="124" height="18" rx="5" fill="#fff"/><text x="0" y="1" text-anchor="middle" fill="#1d4ed8">claim · apply result</text></g>
+    <g transform="translate(531,470)"><rect x="-30" y="-12" width="60" height="18" rx="5" fill="#fff"/><text x="0" y="1" text-anchor="middle" fill="#047857">Connect</text></g>
+    <g transform="translate(897,610)"><rect x="-24" y="-12" width="48" height="18" rx="5" fill="#fff"/><text x="0" y="1" text-anchor="middle" fill="#047857">call</text></g>
+  </g>
+
+  <!-- ============ operator + React UI ============ -->
+  <g filter="url(#shadowSm)">
+    <rect x="74" y="146" width="152" height="40" rx="13" fill="#ffffff" stroke="#cbd5e1" stroke-width="1.5"/>
+  </g>
+  <text x="150" y="171" text-anchor="middle" font-size="13.5" font-weight="600" fill="#334155">👤 Operator</text>
+
+  <g filter="url(#shadowSm)">
+    <rect x="60" y="226" width="180" height="66" rx="16" fill="#ffffff" stroke="#94a3b8" stroke-width="1.5"/>
+  </g>
+  <text x="150" y="255" text-anchor="middle" font-size="15" font-weight="700" fill="#334155">⚛ React UI</text>
+  <text x="150" y="276" text-anchor="middle" font-size="11.5" fill="#64748b">embedded in the binary</text>
+
+  <!-- ============ converge binary group (scalable: stacked + ×N) ============ -->
+  <!-- back stack cards to imply horizontal scaling -->
+  <g filter="url(#shadowSm)">
+    <rect x="402" y="138" width="298" height="290" rx="22" fill="#eaf1fe" stroke="#bfdbfe" stroke-width="1.5"/>
+    <rect x="392" y="129" width="298" height="290" rx="22" fill="#edf3fe" stroke="#bfdbfe" stroke-width="1.5"/>
+  </g>
+  <g filter="url(#shadow)">
+    <rect x="382" y="120" width="298" height="290" rx="22" fill="url(#gConverge)" stroke="#93c5fd" stroke-width="1.5"/>
+  </g>
+  <text x="398" y="146" font-size="13" font-weight="700" fill="#1e40af">converge <tspan font-weight="500" fill="#2563eb" font-style="italic">binary · scales horizontally</tspan></text>
+  <!-- scale chip -->
+  <g transform="translate(648,150)">
+    <rect x="-30" y="-13" width="44" height="20" rx="10" fill="#dbeafe" stroke="#93c5fd" stroke-width="1"/>
+    <text x="-8" y="2" text-anchor="middle" font-size="12" font-weight="700" fill="#1d4ed8">×N</text>
+  </g>
+
+  <!-- control plane card -->
+  <g filter="url(#shadowSm)">
+    <rect x="402" y="160" width="258" height="98" rx="14" fill="url(#gControl)" stroke="#6366f1" stroke-width="2"/>
+  </g>
+  <text x="531" y="200" text-anchor="middle" font-size="17" font-weight="700" fill="#1e1b4b">⎈ Control plane</text>
+  <text x="531" y="224" text-anchor="middle" font-size="13" fill="#475569">REST API + UI</text>
+  <text x="531" y="244" text-anchor="middle" font-size="13" fill="#475569">reconcile &amp; schedule</text>
+
+  <!-- broker card -->
+  <g filter="url(#shadowSm)">
+    <rect x="402" y="282" width="258" height="112" rx="14" fill="url(#gBroker)" stroke="#2563eb" stroke-width="2"/>
+  </g>
+  <text x="531" y="330" text-anchor="middle" font-size="17" font-weight="700" fill="#3b0764">⇄ Broker</text>
+  <text x="531" y="356" text-anchor="middle" font-size="13" fill="#475569">work dispatcher</text>
+
+  <!-- ============ Postgres ============ -->
+  <g filter="url(#shadow)">
+    <rect x="1004" y="120" width="216" height="150" rx="20" fill="url(#gDb)" stroke="#f59e0b" stroke-width="2"/>
+  </g>
+  <text x="1112" y="186" text-anchor="middle" font-size="40">🐘</text>
+  <text x="1112" y="226" text-anchor="middle" font-size="20" font-weight="700" fill="#7c2d12">Postgres</text>
+
+  <!-- ============ worker (single box, scalable: stacked + ×N) ============ -->
+  <!-- back stack cards imply horizontal scaling, matching the converge box -->
+  <g filter="url(#shadowSm)">
+    <rect x="291" y="558" width="520" height="150" rx="22" fill="#e6f9f0" stroke="#bbf7d0" stroke-width="1.5"/>
+    <rect x="281" y="549" width="520" height="150" rx="22" fill="#eafbf3" stroke="#bbf7d0" stroke-width="1.5"/>
+  </g>
+  <g filter="url(#shadow)">
+    <rect x="271" y="540" width="520" height="150" rx="22" fill="url(#gPool)" stroke="#86efac" stroke-width="1.5"/>
+  </g>
+  <text x="287" y="566" font-size="13" font-weight="700" fill="#047857">worker <tspan font-weight="500" fill="#10b981" font-style="italic">· scales horizontally</tspan></text>
+  <g transform="translate(759,556)">
+    <rect x="-30" y="-13" width="44" height="20" rx="10" fill="#d1fae5" stroke="#86efac" stroke-width="1"/>
+    <text x="-8" y="2" text-anchor="middle" font-size="12" font-weight="700" fill="#047857">×N</text>
+  </g>
+
+  <text x="531" y="602" text-anchor="middle" font-size="15" font-weight="700" fill="#064e3b">Run Terraform · a Kubernetes Job · custom code · call any external API</text>
+  <text x="531" y="628" text-anchor="middle" font-size="15" font-weight="700" fill="#064e3b">Compose other resources</text>
+  <text x="531" y="652" text-anchor="middle" font-size="13.5" fill="#0f766e">with Go · CEL · Starlark · etc.</text>
+
+  <!-- ============ external systems (right side, worker's row) ============ -->
+  <g filter="url(#shadow)">
+    <rect x="1004" y="540" width="216" height="150" rx="20" fill="#ffffff" stroke="#94a3b8" stroke-width="1.5"/>
+  </g>
+  <text x="1112" y="588" text-anchor="middle" font-size="30">☁️</text>
+  <text x="1112" y="624" text-anchor="middle" font-size="15" font-weight="700" fill="#334155">Cloud</text>
+  <text x="1112" y="648" text-anchor="middle" font-size="15" font-weight="700" fill="#334155">Kubernetes</text>
+  <text x="1112" y="672" text-anchor="middle" font-size="15" font-weight="700" fill="#334155">any API</text>
+</svg>

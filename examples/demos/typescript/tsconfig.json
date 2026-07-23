@@ -1,0 +1,17 @@
+{
+  // Compile the demo worker (src/) to dist/. The converge-worker-sdk dependency ships its
+  // own .d.ts + JS (installed via file: into node_modules), so this only builds the demo's
+  // own code — it does not recompile the SDK.
+  "compilerOptions": {
+    "target": "ES2022",
+    "module": "NodeNext",
+    "moduleResolution": "NodeNext",
+    "strict": true,
+    "esModuleInterop": true,
+    "skipLibCheck": true,
+    "outDir": "dist",
+    "rootDir": "src",
+    "types": ["node"]
+  },
+  "include": ["src/**/*.ts"]
+}

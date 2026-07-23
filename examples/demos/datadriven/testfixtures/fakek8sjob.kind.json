@@ -1,0 +1,43 @@
+{
+  "kind": "fakek8sjob",
+  "kind_version": 1,
+  "max_transient_attempts": 20,
+  "description": "fakek8sjob/v1 — Simulation leaf that fakes 'run a team's Kubernetes Job'. Input is spec.image (a Docker repository:tag, e.g. nginx:1.27); on reconcile it pretends to submit a Job running that image and writes a deterministic fake Job status. The SECOND half of the demo's second DAG: it depends on a faketerraform upstream, and the engine flows that apply's status.image_tag into spec.built_image \u2014 so the Job runs the image the team's Terraform built (built wins over the literal image). Teams apply it DECLARATIVELY via a celbom rule or a stdstarlark policy.",
+  "spec_schema": {
+    "type": "object",
+    "additionalProperties": true,
+    "properties": {
+      "image": {
+        "type": "string",
+        "description": "Docker image to run (repository:tag), e.g. nginx:1.27. The literal input set in the team's policy."
+      },
+      "built_image": {
+        "type": "string",
+        "description": "Image flowed in from an upstream faketerraform apply (status.image_tag); preferred over image when present."
+      }
+    }
+  },
+  "status_schema": {
+    "type": "object",
+    "additionalProperties": true,
+    "properties": {
+      "job": {
+        "type": "string",
+        "description": "Deterministic fake Job name."
+      },
+      "ran_image": {
+        "type": "string",
+        "description": "The image the Job actually ran (built_image wins over the literal image)."
+      }
+    }
+  },
+  "reactions": [
+    {
+      "name": "work",
+      "trigger": "specChange",
+      "emits": [
+        "status"
+      ]
+    }
+  ]
+}

@@ -1,0 +1,13 @@
+{
+  "kind": "fakek8sjob",
+  "kind_version": 1,
+  "name": "sample-fakek8sjob",
+  "labels": {
+    "demo": "datadriven",
+    "sample": "manual",
+    "kind": "fakek8sjob"
+  },
+  "spec": {
+    "image": "nginx:1.27"
+  }
+}

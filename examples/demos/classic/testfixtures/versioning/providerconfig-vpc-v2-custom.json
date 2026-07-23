@@ -1,0 +1,10 @@
+{
+  "kind": "vpc",
+  "kind_version": 2,
+  "name": "vpc-v2-payments",
+  "is_default": false,
+  "spec": {
+    "flow_logs_bucket": "s3://payments-flowlogs-v2",
+    "default_region": "eu-central-1"
+  }
+}

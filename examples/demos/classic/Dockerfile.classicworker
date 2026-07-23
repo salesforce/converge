@@ -1,0 +1,27 @@
+# classic-worker image: the CLASSIC demo's dumb gRPC worker — the reference
+# provider set (classicbom composer + account/networking leaves + statussink
+# reactor). This is the "a deployment with its OWN Go providers ships its own
+# worker image" case the root Dockerfile documents: the shipped image carries only
+# the generic `agent` worker, so a demo with compiled-in providers builds its own.
+#
+# Unlike the terraform worker (which needs tofu + aws + git + curl on its base), classic is PURE Go —
+# it shells out to nothing — so it rides the same tiny alpine base as the main
+# image. It holds NO database handle: it pulls config + work from a broker over
+# gRPC (BROKER_ADDR), so it needs no DATABASE_URL and no AWS identity.
+#
+# The Go worker binary is PREBUILT on the host (static, linux/amd64) by the root
+# justfile and copied in — we don't build Go inside the image. Build it with:
+#   just classic-worker-image        (cross-compiles + docker build)
+FROM alpine:3.20
+
+# ca-certificates for a TLS broker connection; nothing else — classic execs no
+# external tooling. The Go binary is a pure-Go (CGO_ENABLED=0) static build, so it
+# runs on alpine's musl userland with no libc dependency.
+RUN apk add --no-cache ca-certificates
+
+# The prebuilt classic worker binary (built for linux/amd64 by `just classic-worker-image`).
+COPY bin/classic-worker.linux-amd64 /usr/local/bin/classic-worker
+
+# BROKER_ADDR / HEALTH_ADDR / WORKER_MAX_PARALLEL / WORKER_KINDS come from the
+# Deployment env. Health probes hit HEALTH_ADDR (/livez, /readyz).
+ENTRYPOINT ["/usr/local/bin/classic-worker"]

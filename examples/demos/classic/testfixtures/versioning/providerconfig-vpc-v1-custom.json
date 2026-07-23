@@ -1,0 +1,9 @@
+{
+  "kind": "vpc",
+  "kind_version": 1,
+  "name": "vpc-v1-payments",
+  "is_default": false,
+  "spec": {
+    "flow_logs_bucket": "s3://payments-flowlogs"
+  }
+}

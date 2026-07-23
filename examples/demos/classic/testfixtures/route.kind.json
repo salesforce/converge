@@ -1,0 +1,58 @@
+{
+  "kind": "route",
+  "kind_version": 1,
+  "max_transient_attempts": 20,
+  "description": "route/v1 — A routing-table entry attaching a VPC to a TGW. The vpc_id and tgw_id fields are filled in by the framework when the upstreams become ready.",
+  "spec_schema": {
+    "additionalProperties": false,
+    "properties": {
+      "tgw_id": {
+        "description": "Provider TGW id the VPC attaches to.",
+        "minLength": 1,
+        "type": "string"
+      },
+      "vpc_id": {
+        "description": "Provider VPC id this route attaches.",
+        "minLength": 1,
+        "type": "string"
+      }
+    },
+    "required": [
+      "vpc_id",
+      "tgw_id"
+    ],
+    "type": "object"
+  },
+  "status_schema": {
+    "additionalProperties": false,
+    "properties": {
+      "route_id": {
+        "description": "Provider-issued route id.",
+        "type": "string"
+      }
+    },
+    "required": [
+      "route_id"
+    ],
+    "type": "object"
+  },
+  "reactions": [
+    {
+      "name": "work",
+      "trigger": "specChange",
+      "emits": [
+        "status"
+      ]
+    },
+    {
+      "name": "teardown",
+      "trigger": "deleteRequested",
+      "emits": [
+        "finalizer"
+      ],
+      "finalizer": "classic.demo/route"
+    }
+  ],
+  "finalizer_name": "classic.demo/route",
+  "orphan_grace_secs": 30
+}

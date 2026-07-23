@@ -1,0 +1,147 @@
+name: ci
+
+# The verify gate for every push to main and every pull request: it mirrors the
+# local `just` checks a developer runs before committing (fmt/gen drift, build,
+# lint, vuln, the integration suite) so nothing lands on main that the house
+# workflow would reject. Nothing here publishes — releasing is a separate,
+# tag-driven workflow (see release.yml + release-please.yml).
+on:
+  push:
+    branches: [main]
+  pull_request:
+
+# Cancel an in-flight run for the same ref when a newer commit arrives (a force-push
+# or a quick follow-up) — the older run's result is already stale.
+concurrency:
+  group: ci-${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
+permissions:
+  contents: read
+
+jobs:
+  # Fast, Docker-free lane: formatting + generated-code drift, the build, the
+  # linter, and the vulnerability scan. Runs in parallel with the integration job
+  # so a lint failure surfaces without waiting on the (slower) testcontainer suite.
+  verify:
+    runs-on: salesforce-Ubuntu
+    steps:
+      - uses: actions/checkout@v4
+      # go-version-file reads the `go` + `toolchain` lines from go.mod, so the CI
+      # compiler tracks the pinned toolchain (currently go1.26.5 for the crypto/tls
+      # CVE fix) automatically — no version to keep in sync here. cache:false because
+      # the explicit cache step below is broader: setup-go's built-in cache keys on
+      # go.sum only, but our dev tools are run via `go run <module>@<version>` and are
+      # deliberately OFF go.mod (see the justfile header) — so a go.sum-keyed cache
+      # never covers the tool download+compile. Our key adds `justfile` (where the tool
+      # versions live) so the compiled tools are cached and reused across runs.
+      - uses: actions/setup-go@v5
+        with:
+          go-version-file: go.mod
+          cache: false
+      # One cache for BOTH the app's module/build cache AND the `go run @version` dev
+      # tools (sqlc/buf/golangci-lint/oapi-codegen/goimports/govulncheck), which
+      # otherwise re-download + recompile from source on every cold runner (the long
+      # `go: downloading …` wall). Keyed on go.sum (app deps) + justfile (tool pins):
+      # bump a tool version → key busts → tools recompile once; otherwise it's a hit.
+      # EXCLUDE the Go toolchain dir: setup-go@v5 (above) already downloads the go.mod
+      # `toolchain` into ~/go/pkg/mod/golang.org/toolchain@… BEFORE this restore runs,
+      # so caching it too makes tar collide ("Cannot open: File exists") and abort the
+      # whole restore (exit 2). setup-go owns the toolchain; we cache only around it.
+      - uses: actions/cache@v4
+        with:
+          path: |
+            ~/.cache/go-build
+            ~/go/pkg/mod
+            !~/go/pkg/mod/golang.org/toolchain*
+          key: ${{ runner.os }}-go-${{ hashFiles('go.sum', 'justfile') }}
+          restore-keys: |
+            ${{ runner.os }}-go-
+      - uses: extractions/setup-just@v3
+      # node is required by `just gen`/`just build`: both run `just ui`, which builds
+      # the SPA that cmd/converge embeds via go:embed. cache: npm reuses the npm
+      # download cache across runs, keyed on the three package-lock.json files.
+      - uses: actions/setup-node@v4
+        with:
+          node-version-file: .nvmrc
+          cache: npm
+          cache-dependency-path: |
+            ui/package-lock.json
+            sdk-ts/package-lock.json
+            examples/demos/typescript/package-lock.json
+
+      # `just fmt` must be a no-op on a clean tree; a nonzero diff means someone
+      # committed unformatted Go.
+      - name: gofmt / imports drift
+        run: |
+          just fmt
+          git diff --exit-code
+
+      # `just gen` regenerates sqlc → internal/dbq, the protos, the openapi/schema
+      # goldens, and the conctl client. A nonzero diff means generated code was not
+      # regenerated after a query/proto/schema/API change. NB: `just golden` spins a
+      # Postgres testcontainer for the schema golden, so this step needs Docker on the
+      # runner.
+      - name: generated-code drift (just gen)
+        run: |
+          just gen
+          git diff --exit-code
+
+      - name: build (converge + workers + conctl, embeds UI)
+        run: just build
+
+      - name: lint (golangci-lint)
+        run: just lint
+
+      # govulncheck with source-reachable analysis; exits nonzero on a reachable
+      # vulnerability, so it doubles as the CI gate the CLAUDE.md security section
+      # calls for. A new upstream CVE can turn this red without a code change — that
+      # is intended; the fix is a toolchain/module bump.
+      - name: vuln scan (govulncheck)
+        run: just vuln
+
+  # Integration lane: the BASE ./test suite (the fast integration tests). The heavy
+  # chaos/HA/replica soak is NOT gated per-PR — run it locally (`just test`) or on-demand.
+  # Docker is preinstalled on the runner, so the Postgres testcontainers need no
+  # `services:` block. `-p 1` runs the package's tests one at a time (each spins its OWN
+  # fleet + Postgres pool) to cap DB/connection contention on a constrained box.
+  integration:
+    runs-on: salesforce-Ubuntu
+    # 12m is well above the ~5m the base suite takes even CPU-constrained, so a clean
+    # run passes with margin while a genuine wedge still fails in bounded time.
+    timeout-minutes: 15
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-go@v5
+        with:
+          go-version-file: go.mod
+          cache: false
+      # Same tool+deps cache as the verify job (see its comment). A distinct key
+      # namespace ('test' vs 'go') so the two jobs don't overwrite each other's entry —
+      # this job also caches the compiled ./test tree, verify caches the tool binaries.
+      # Excludes the setup-go-managed toolchain dir (see the verify job's cache note) so
+      # the restore doesn't collide with what setup-go already unpacked.
+      - uses: actions/cache@v4
+        with:
+          path: |
+            ~/.cache/go-build
+            ~/go/pkg/mod
+            !~/go/pkg/mod/golang.org/toolchain*
+          key: ${{ runner.os }}-go-test-${{ hashFiles('go.sum', 'justfile') }}
+          restore-keys: |
+            ${{ runner.os }}-go-test-
+            ${{ runner.os }}-go-
+      - uses: extractions/setup-just@v3
+      - uses: actions/setup-node@v4
+        with:
+          node-version-file: .nvmrc
+          cache: npm
+          cache-dependency-path: |
+            ui/package-lock.json
+            sdk-ts/package-lock.json
+            examples/demos/typescript/package-lock.json
+
+      # The base ./test suite only (no -chaos/-chaos-ha/-stress-replica flags → those
+      # tests t.Skip). `-p 1` serializes the package's tests to cap DB contention.
+      - name: base integration suite
+        run: go test -count=1 -timeout 12m -p 1 ./test/

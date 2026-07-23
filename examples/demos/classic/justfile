@@ -1,0 +1,197 @@
+# Classic composition demo: a hand-written Go composer (classicbom) that fans a
+# BOM of teams into per-FD/per-team resources (account + networking: vpc/route/tgw),
+# wired by value flows, rolled up, and with a reactor (statussink) subscribed to
+# the root's 'synced' transition, uploading its rolled-up status. Run `just demo` to bring up a 3-control
+# + 3-broker converge cluster + 1 worker, then apply the BOM.
+#
+# This is the "compiled Go composer" counterpart to ../datadriven (logic-as-data).
+# Same engine; the difference is the composer is Go here, data there.
+
+set shell := ["bash", "-uc"]
+
+root := `git rev-parse --show-toplevel`
+here := justfile_directory()
+# The demo applies its CRDs via conctl from BOTH the core testfixtures/ (for
+# shared kinds) AND this demo's testfixtures/ (classicbom, account, vpc/route/tgw,
+# statussink) — an OS-path-list of dirs. The server does no fixture bootstrap.
+fixtures := root / "testfixtures" + ":" + here / "testfixtures"
+api := "http://localhost:8080"
+# conctl is the kubectl-style CLI (built by the root `just build`) this demo
+# applies/lists objects with; --server points it at the local control API. The
+# fixtures are raw API bodies (no `type` field), so each apply passes --type to
+# name which object it is.
+conctl := root / "bin" / "conctl"
+
+# Default: list recipes.
+default:
+    @just --list
+
+# Bring up the cluster + this demo's workers, apply the CRDs (via conctl), apply
+# the reactor subscription, then apply the BOM.
+#   3 control + 3 brokers + 3 classic workers (override num_workers on the CLI).
+#
+# Optional chaos knobs (default off — a plain `just demo` is unaffected):
+#   delay      — per-React simulated latency for account/networking workers
+#                (FAKE_WORK_DELAY), e.g. delay=2s. Slows convergence so you can
+#                watch it happen.
+#   fault_rate — probability ANY single account/networking reconcile fails
+#                TRANSIENTLY (FAKE_FAULT_RATE, 0..1). The engine retries with
+#                backoff, so faulted resources flap Reconciling→Failed→…→Ready.
+#                See `just inject-faults` for the chaos preset.
+#   delete_delay — simulated teardown (finalizer) latency per resource
+#                (FAKE_DELETE_DELAY). DEFAULTS TO 5s (not 0) so that deleting a
+#                BOM visibly CASCADES: every kind (classicbom + account/vpc/tgw/
+#                route) has a finalizer, so `conctl delete resource <bom>` marks
+#                the whole tree and tears it down reverse-dependency order —
+#                dependents (routes) before their dependencies (vpc→account),
+#                the root LAST. Watch the graph collapse inward in the UI.
+#
+# num_workers MUST be >= the broker count (3): each broker owns a disjoint shard
+# tile and only dispatches a kind to a CONNECTED worker (the HasSubscriber gate).
+# A worker connects to ONE broker (round-robin j % NUM_BROKERS), so with fewer
+# workers than brokers, some tiles have NO worker and their resources strand
+# (compose/recompose never claimed). 3 workers cover all 3 brokers.
+#
+# ARGS ARE POSITIONAL (just, not name=value): `just demo 3 0.25 10s`, NOT
+# `just demo fault_rate=0.25` (that lands "fault_rate=0.25" in num_workers → 0 workers).
+[doc("cluster + BOM (POSITIONAL args, e.g. `just demo 3 0.25 10s`)")]
+demo num_workers="3" fault_rate="0" delay="0s" delete_delay="5s": build
+    #!/usr/bin/env bash
+    set -euo pipefail
+    # `just` recipe args are POSITIONAL — `just demo 3 0.25 10s`, NOT
+    # `just demo fault_rate=0.25`. A name=value first arg would land in num_workers
+    # (e.g. "fault_rate=0.25"), and `for ((j=0; j<NUM_WORKERS))` evaluates a
+    # non-numeric bound as 0 → ZERO workers start → the BOM sits "queued, not yet
+    # claimed" with a healthy-looking control+broker. Guard against exactly that.
+    case "{{num_workers}}" in
+      ''|*[!0-9]*)
+        echo "!! num_workers='{{num_workers}}' is not a positive integer."
+        echo "!! just args are POSITIONAL: just demo <num_workers> <fault_rate> <delay> <delete_delay>"
+        echo "!!   just demo                 # defaults (3 workers)"
+        echo "!!   just demo 3 0.25 10s       # 3 workers, 25% faults, 10s work delay"
+        echo "!!   just inject-faults 0.25 10s"
+        exit 1 ;;
+    esac
+    if [ "{{num_workers}}" -lt 1 ]; then echo "!! num_workers must be >= 1"; exit 1; fi
+    # Pre-flight: a prior run left orphaned (control/broker/worker) processes holding
+    # the ports + shared dev Postgres will wedge this launch (workers never start →
+    # the BOM sits "queued, not yet claimed"). Warn loudly and bail with the fix so
+    # it's obvious — don't auto-kill (you might be running a second cluster on purpose).
+    if pgrep -f "deploy/dev-local.sh" >/dev/null 2>&1 || pgrep -f "bin/classic-worker" >/dev/null 2>&1; then
+      echo "!! a previous local run is still alive (dev-local.sh / classic-worker processes found)."
+      echo "!! it holds the ports + dev Postgres and will wedge this run. Clean it first:"
+      echo "!!     just kill"
+      exit 1
+    fi
+    echo "== classic demo: 3 control + 3 brokers + {{num_workers}} workers =="
+    echo "   CRDs applied via conctl from: {{fixtures}}"
+    if [ "{{fault_rate}}" != "0" ] || [ "{{delay}}" != "0s" ]; then
+      echo "   CHAOS: FAKE_FAULT_RATE={{fault_rate}} (transient, retried)  FAKE_WORK_DELAY={{delay}} (per React)"
+    fi
+    echo "   FAKE_DELETE_DELAY={{delete_delay}} (per-resource teardown; deleting the BOM cascades)"
+    # FAKE_FAULT_RATE / FAKE_WORK_DELAY / FAKE_DELETE_DELAY are read by the classicbom
+    # + account + networking providers' Setup; the launcher exports the whole env to
+    # every worker process.
+    NUM_CONTROL=3 NUM_BROKERS=3 NUM_WORKERS={{num_workers}} \
+    WORKER_BIN="{{root}}/bin/classic-worker" \
+    FAKE_FAULT_RATE="{{fault_rate}}" FAKE_WORK_DELAY="{{delay}}" FAKE_DELETE_DELAY="{{delete_delay}}" \
+      bash "{{root}}/deploy/dev-local.sh" &
+    cluster_pid=$!
+    trap 'kill "$cluster_pid" 2>/dev/null || true' EXIT INT TERM
+
+    echo "== waiting for the control API at {{api}} =="
+    for _ in $(seq 1 60); do
+      curl -fsS "{{api}}/livez" >/dev/null 2>&1 && break || sleep 1
+    done
+
+    # Apply the CRDs (kind manifests) FIRST: the broker learns claimable kinds
+    # from kind_manifest, and a resource needs its kind's manifest to validate, so
+    # this precedes the config/BOM below. {{fixtures}} is an OS-path-list of dirs
+    # (core testfixtures + this demo's); apply every *.kind.json under them.
+    echo "== applying CRDs (kind manifests) via conctl =="
+    IFS=: read -ra _crd_dirs <<< "{{fixtures}}"
+    for _d in "${_crd_dirs[@]}"; do
+      for _k in "$_d"/*.kind.json; do
+        [ -e "$_k" ] || continue
+        "{{conctl}}" --server "{{api}}" apply --type manifest -f "$_k"
+      done
+    done
+
+    echo "== applying the reactor subscription (classicbom 'synced' → statussink) =="
+    "{{conctl}}" --server "{{api}}" apply --type reactorbinding \
+      -f "{{here}}/testfixtures/reactor-binding-classicbom-to-statussink.json" \
+      || echo "  (subscription skipped — apply it manually if your build predates the reactor API)"
+
+    echo "== applying the statussink reactor config (upload endpoint/prefix) =="
+    # Non-fatal: a reactor's providerconfig may 422 if the API gates POSTs to
+    # 'declared' work kinds only (statussink is a reactor kind). The reactor still
+    # runs — it's the demo's status-upload destination, not core to seeing the BOM
+    # compose. The binding above is what makes it FIRE.
+    if "{{conctl}}" --server "{{api}}" apply --type providerconfig \
+         -f "{{here}}/testfixtures/providerconfig-statussink.json" >/dev/null 2>&1; then
+      echo "  applied statussink config"
+    else
+      echo "  (statussink config skipped — reactor providerconfig POST not accepted; status upload disabled, compose still works)"
+    fi
+
+    echo "== applying the BOM (classicbom → account + vpc/route/tgw per team) =="
+    "{{conctl}}" --server "{{api}}" apply --type resource \
+      -f "{{here}}/testfixtures/resource-classicbom.json"
+
+    echo
+    echo "== demo applied. Watch it converge in the UI ({{api}}) or:"
+    echo "   {{conctl}} list resources          # the composition roots + child counts"
+    if [ "{{fault_rate}}" != "0" ]; then
+      echo "   watch the fault churn (counts by phase, refresh every 3s):"
+      echo "     watch -n3 \"{{conctl}} list resources --all --limit 100000 -o json | jq -r '.resources[].phase' | sort | uniq -c\""
+      echo "   transient faults retry+heal: expect Failed to rise then drain to 0 as all reach Ready."
+    fi
+    echo "   then apply resource-classicbom-updated.json (1 team removed, 1 added) to watch a recompose."
+    echo
+    echo "== try a CASCADE DELETE (every kind has a finalizer; teardown paced by FAKE_DELETE_DELAY={{delete_delay}}):"
+    echo "   {{conctl}} delete resource <account-id>   # deletes a leaf account + everything downstream of it"
+    echo "   {{conctl}} delete resource <bom-id>       # deletes the WHOLE tree, reverse-dep order, root last"
+    echo "   watch the graph collapse inward in the UI. NOTE: while the BOM still exists + is desired, its"
+    echo "   resync (resync_interval_secs) RE-COMPOSES and RE-CREATES a child you delete out from under it —"
+    echo "   so to actually tear a subtree down, delete the BOM root (or lower the child from the BOM spec)."
+    echo "== Ctrl+C to tear down the cluster + Postgres."
+    wait "$cluster_pid"
+
+# Chaos preset: `just demo` with transient fault injection + a per-React delay so
+# the engine's at-least-once RETRY/backoff is visible. account/networking reconciles
+# fail TRANSIENTLY at `rate` (the composer is NOT faulted, so the DAG still builds);
+# every faulted resource heals on a later retry → the run still fully converges.
+# POSITIONAL args (just): inject-faults [rate] [delay] [num_workers].
+#   just inject-faults              # rate=0.3, delay=2s, 3 workers
+#   just inject-faults 0.5 5s        # rate=0.5, delay=5s
+#   just inject-faults 0.2 1s 6      # rate=0.2, delay=1s, 6 workers
+[doc("chaos preset over `demo` (POSITIONAL, e.g. `just inject-faults 0.5 5s`)")]
+inject-faults rate="0.3" delay="2s" num_workers="3":
+    @just demo {{num_workers}} {{rate}} {{delay}}
+
+# Build the embedded React UI + the converge binary (control/broker) via the
+# ROOT `just build` — the single source of truth for that (it builds the UI
+# first so bin/converge embeds a FRESH ui/dist, restores dist/.gitkeep, and
+# stamps BuildVersion). Then build THIS demo's own worker. Delegating avoids the
+# "stale embedded UI after a code change" trap without duplicating the UI steps.
+[doc("build converge + UI + this demo's classic-worker")]
+build:
+    just -f "{{root}}/justfile" build
+    cd "{{root}}" && go build -o bin/classic-worker ./examples/demos/classic/cmd/worker
+
+# Build the classic-worker container image (for the converge-worker Helm chart or
+# any k8s deploy). Like the terraform worker, the binary is cross-compiled on the host
+# (static, linux/amd64), then Dockerfile.classicworker packages it on a tiny alpine
+# base — the "demo with its own Go providers ships its own worker image" pattern.
+# The tag is a positional recipe ARGUMENT, so pass it after the recipe:
+# `just classic-worker-image myrepo/classic-worker:v1`.
+[doc("build the classic-worker linux/amd64 image (override tag: `just classic-worker-image myrepo/classic-worker:v1`)")]
+classic-worker-image image="classic-worker:latest":
+    cd "{{root}}" && GOOS=linux GOARCH=amd64 CGO_ENABLED=0 \
+      go build -trimpath -ldflags='-s -w' \
+      -o bin/classic-worker.linux-amd64 ./examples/demos/classic/cmd/worker
+    # --platform is REQUIRED on an arm64 host (Apple Silicon): the COPYd binary is
+    # amd64, so the image manifest must be stamped amd64 too (else amd64 nodes reject
+    # it). The amd64 alpine base is pulled directly — no QEMU, no slowdown.
+    cd "{{root}}" && docker build --platform linux/amd64 \
+      -f examples/demos/classic/Dockerfile.classicworker -t {{image}} .

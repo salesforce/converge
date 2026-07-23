@@ -1,0 +1,17 @@
+{
+  "kind": "stdcel",
+  "kind_version": 1,
+  "name": "kro-happy-newton",
+  "labels": {
+    "demo": "datadriven",
+    "composer": "stdcel",
+    "config": "default",
+    "env": "demo"
+  },
+  "spec": {
+    "fd": "fd-00",
+    "team": "happy-newton",
+    "account": "happy-newton",
+    "image": "nginx:1.27"
+  }
+}

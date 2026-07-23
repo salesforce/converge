@@ -1,0 +1,14 @@
+{
+  "kind": "vpc",
+  "kind_version": 1,
+  "name": "sample-vpc",
+  "labels": {
+    "demo": "classic",
+    "sample": "manual",
+    "kind": "vpc"
+  },
+  "spec": {
+    "account_id": "123456789012",
+    "cidr": "10.0.0.0/16"
+  }
+}
