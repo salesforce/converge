@@ -29,21 +29,41 @@ jobs:
       - uses: actions/checkout@v4
       # go-version-file reads the `go` + `toolchain` lines from go.mod, so the CI
       # compiler tracks the pinned toolchain (currently go1.26.5 for the crypto/tls
-      # CVE fix) automatically — no version to keep in sync here.
+      # CVE fix) automatically — no version to keep in sync here. cache:false because
+      # the explicit cache step below is broader: setup-go's built-in cache keys on
+      # go.sum only, but our dev tools are run via `go run <module>@<version>` and are
+      # deliberately OFF go.mod (see the justfile header) — so a go.sum-keyed cache
+      # never covers the tool download+compile. Our key adds `justfile` (where the tool
+      # versions live) so the compiled tools are cached and reused across runs.
       - uses: actions/setup-go@v5
         with:
           go-version-file: go.mod
-          cache: true
+          cache: false
+      # One cache for BOTH the app's module/build cache AND the `go run @version` dev
+      # tools (sqlc/buf/golangci-lint/oapi-codegen/goimports/govulncheck), which
+      # otherwise re-download + recompile from source on every cold runner (the long
+      # `go: downloading …` wall). Keyed on go.sum (app deps) + justfile (tool pins):
+      # bump a tool version → key busts → tools recompile once; otherwise it's a hit.
+      - uses: actions/cache@v4
+        with:
+          path: |
+            ~/.cache/go-build
+            ~/go/pkg/mod
+          key: ${{ runner.os }}-go-${{ hashFiles('go.sum', 'justfile') }}
+          restore-keys: |
+            ${{ runner.os }}-go-
       - uses: extractions/setup-just@v3
       # node is required by `just gen`/`just build`: both run `just ui`, which builds
-      # the SPA that cmd/converge embeds via go:embed.
+      # the SPA that cmd/converge embeds via go:embed. cache: npm reuses the npm
+      # download cache across runs, keyed on the three package-lock.json files.
       - uses: actions/setup-node@v4
         with:
           node-version-file: .nvmrc
-
-      # Dev tools (sqlc/buf/golangci-lint/oapi-codegen/goimports/govulncheck) are NOT
-      # installed — every recipe fetches them via pinned `go run <module>@<version>`,
-      # so there is nothing to install for the steps below.
+          cache: npm
+          cache-dependency-path: |
+            ui/package-lock.json
+            sdk-ts/package-lock.json
+            examples/demos/typescript/package-lock.json
 
       # `just fmt` must be a no-op on a clean tree; a nonzero diff means someone
       # committed unformatted Go.
@@ -93,11 +113,28 @@ jobs:
       - uses: actions/setup-go@v5
         with:
           go-version-file: go.mod
-          cache: true
+          cache: false
+      # Same tool+deps cache as the verify job (see its comment). A distinct key
+      # namespace ('test' vs 'go') so the two jobs don't overwrite each other's entry —
+      # this job also caches the compiled ./test tree, verify caches the tool binaries.
+      - uses: actions/cache@v4
+        with:
+          path: |
+            ~/.cache/go-build
+            ~/go/pkg/mod
+          key: ${{ runner.os }}-go-test-${{ hashFiles('go.sum', 'justfile') }}
+          restore-keys: |
+            ${{ runner.os }}-go-test-
+            ${{ runner.os }}-go-
       - uses: extractions/setup-just@v3
       - uses: actions/setup-node@v4
         with:
           node-version-file: .nvmrc
+          cache: npm
+          cache-dependency-path: |
+            ui/package-lock.json
+            sdk-ts/package-lock.json
+            examples/demos/typescript/package-lock.json
 
       - name: full integration suite (base + chaos + HA + replica)
         run: just test
