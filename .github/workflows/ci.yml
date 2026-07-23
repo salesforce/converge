@@ -44,11 +44,16 @@ jobs:
       # otherwise re-download + recompile from source on every cold runner (the long
       # `go: downloading …` wall). Keyed on go.sum (app deps) + justfile (tool pins):
       # bump a tool version → key busts → tools recompile once; otherwise it's a hit.
+      # EXCLUDE the Go toolchain dir: setup-go@v5 (above) already downloads the go.mod
+      # `toolchain` into ~/go/pkg/mod/golang.org/toolchain@… BEFORE this restore runs,
+      # so caching it too makes tar collide ("Cannot open: File exists") and abort the
+      # whole restore (exit 2). setup-go owns the toolchain; we cache only around it.
       - uses: actions/cache@v4
         with:
           path: |
             ~/.cache/go-build
             ~/go/pkg/mod
+            !~/go/pkg/mod/golang.org/toolchain*
           key: ${{ runner.os }}-go-${{ hashFiles('go.sum', 'justfile') }}
           restore-keys: |
             ${{ runner.os }}-go-
@@ -114,11 +119,14 @@ jobs:
       # Same tool+deps cache as the verify job (see its comment). A distinct key
       # namespace ('test' vs 'go') so the two jobs don't overwrite each other's entry —
       # this job also caches the compiled ./test tree, verify caches the tool binaries.
+      # Excludes the setup-go-managed toolchain dir (see the verify job's cache note) so
+      # the restore doesn't collide with what setup-go already unpacked.
       - uses: actions/cache@v4
         with:
           path: |
             ~/.cache/go-build
             ~/go/pkg/mod
+            !~/go/pkg/mod/golang.org/toolchain*
           key: ${{ runner.os }}-go-test-${{ hashFiles('go.sum', 'justfile') }}
           restore-keys: |
             ${{ runner.os }}-go-test-
