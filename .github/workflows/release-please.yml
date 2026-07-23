@@ -1,0 +1,29 @@
+name: release-please
+
+# The automated release driver. On every push to main it re-reads the Conventional
+# Commits since the last release and maintains a standing "release PR" that bumps the
+# version + updates CHANGELOG.md. Merging that PR is the deliberate "cut a release"
+# act: release-please then creates the annotated vX.Y.Z tag and a GitHub Release,
+# which in turn triggers release.yml to build + publish the images. No tag is ever
+# hand-typed — the SemVer bump is derived from the commit prefixes (feat→minor,
+# fix→patch, !/BREAKING CHANGE→major), which our squash-merge PR titles carry.
+on:
+  push:
+    branches: [main]
+
+permissions:
+  contents: write        # create the release-PR branch, tags, and GitHub Releases
+  pull-requests: write   # open/update the standing release PR
+
+jobs:
+  release-please:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: googleapis/release-please-action@v4
+        with:
+          # release-type: go + our config bump the app version (the git tag drives
+          # -X main.BuildVersion; there is no version file for the Go binary) and the
+          # Helm chart appVersion. Config + last-released state live in the two JSON
+          # files at the repo root.
+          config-file: release-please-config.json
+          manifest-file: .release-please-manifest.json

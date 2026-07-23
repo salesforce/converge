@@ -1,0 +1,83 @@
+name: release
+
+# Fires when a SemVer tag (v1.2.3) is pushed — the deliberate "cut a release" act.
+# The tag itself is created by the release-please workflow when its release PR is
+# merged (see release-please.yml), so this workflow is almost never triggered by a
+# hand-pushed tag; it is the build+publish half of the automated flow. It builds
+# the two linux/amd64 images from host-built binaries, pushes them to GHCR tagged
+# with the release version, and attaches a GitHub Release with generated notes.
+on:
+  push:
+    tags: ["v*.*.*"]
+
+# GITHUB_TOKEN scopes: write contents to create the GitHub Release; write packages
+# to push images to ghcr.io/<owner>/… with the built-in token (no registry secret).
+permissions:
+  contents: write
+  packages: write
+
+jobs:
+  release:
+    runs-on: ubuntu-latest
+    steps:
+      # fetch-depth: 0 pulls the full tag history so the `git describe --tags` inside
+      # `just build`/`just docker` resolves the exact release tag (e.g. v0.2.0) into
+      # -X main.BuildVersion — otherwise a shallow clone yields a bare commit hash.
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+      - uses: actions/setup-go@v5
+        with:
+          go-version-file: go.mod
+          cache: true
+      - uses: extractions/setup-just@v3
+      - uses: actions/setup-node@v4
+        with:
+          node-version-file: .nvmrc
+
+      # ghcr.io login with the workflow's own token — no external registry secret.
+      - name: Log in to GHCR
+        uses: docker/login-action@v3
+        with:
+          registry: ghcr.io
+          username: ${{ github.actor }}
+          password: ${{ secrets.GITHUB_TOKEN }}
+
+      # The two shipped images:
+      #   - `just docker`           → control/broker + conctl (root Dockerfile)
+      #   - `just docker-stdworker` → the default stdworker (Dockerfile.stdworker)
+      # Both recipes build the binaries on the host FIRST (UI + cross-compiled
+      # linux/amd64) and only COPY them into the image, so no Go toolchain runs in
+      # Docker. GITHUB_REF_NAME on a tag push IS the tag (v0.2.0), so the image tag
+      # matches the BuildVersion `git describe` stamps into the binaries.
+      #
+      # OWNER is lower-cased: GHCR repository paths must be lowercase, but a GitHub
+      # org/user slug may contain uppercase (e.g. Salesforce), which docker rejects.
+      - name: Build + push images
+        run: |
+          set -euo pipefail
+          VER="${GITHUB_REF_NAME}"
+          OWNER="$(echo '${{ github.repository_owner }}' | tr '[:upper:]' '[:lower:]')"
+          CONTROL="ghcr.io/${OWNER}/converge"
+          WORKER="ghcr.io/${OWNER}/converge-stdworker"
+
+          just docker image="${CONTROL}:${VER}"
+          just docker-stdworker "${WORKER}:${VER}"
+
+          docker push "${CONTROL}:${VER}"
+          docker push "${WORKER}:${VER}"
+
+          # Also move the mutable :latest tag to this release (convenience pull tag;
+          # deployments should still pin an immutable :vX.Y.Z).
+          docker tag "${CONTROL}:${VER}" "${CONTROL}:latest"
+          docker tag "${WORKER}:${VER}" "${WORKER}:latest"
+          docker push "${CONTROL}:latest"
+          docker push "${WORKER}:latest"
+
+      # The GitHub Release. release-please already creates a release when it merges
+      # the release PR; this fills in generated notes and marks it published. If a
+      # release for the tag already exists it is updated, not duplicated.
+      - name: GitHub Release
+        uses: softprops/action-gh-release@v2
+        with:
+          generate_release_notes: true

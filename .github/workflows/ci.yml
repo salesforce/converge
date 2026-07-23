@@ -1,0 +1,103 @@
+name: ci
+
+# The verify gate for every push to main and every pull request: it mirrors the
+# local `just` checks a developer runs before committing (fmt/gen drift, build,
+# lint, vuln, the integration suite) so nothing lands on main that the house
+# workflow would reject. Nothing here publishes — releasing is a separate,
+# tag-driven workflow (see release.yml + release-please.yml).
+on:
+  push:
+    branches: [main]
+  pull_request:
+
+# Cancel an in-flight run for the same ref when a newer commit arrives (a force-push
+# or a quick follow-up) — the older run's result is already stale.
+concurrency:
+  group: ci-${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
+permissions:
+  contents: read
+
+jobs:
+  # Fast, Docker-free lane: formatting + generated-code drift, the build, the
+  # linter, and the vulnerability scan. Runs in parallel with the integration job
+  # so a lint failure surfaces without waiting on the (slower) testcontainer suite.
+  verify:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      # go-version-file reads the `go` + `toolchain` lines from go.mod, so the CI
+      # compiler tracks the pinned toolchain (currently go1.26.5 for the crypto/tls
+      # CVE fix) automatically — no version to keep in sync here.
+      - uses: actions/setup-go@v5
+        with:
+          go-version-file: go.mod
+          cache: true
+      - uses: extractions/setup-just@v3
+      # node is required by `just gen`/`just build`: both run `just ui`, which builds
+      # the SPA that cmd/converge embeds via go:embed.
+      - uses: actions/setup-node@v4
+        with:
+          node-version-file: .nvmrc
+
+      # Dev tools (sqlc/buf/golangci-lint/oapi-codegen/goimports/govulncheck) are NOT
+      # installed — every recipe fetches them via pinned `go run <module>@<version>`,
+      # so there is nothing to install for the steps below.
+
+      # `just fmt` must be a no-op on a clean tree; a nonzero diff means someone
+      # committed unformatted Go.
+      - name: gofmt / imports drift
+        run: |
+          just fmt
+          git diff --exit-code
+
+      # `just gen` regenerates sqlc → internal/dbq, the protos, the openapi/schema
+      # goldens, and the conctl client. A nonzero diff means generated code was not
+      # regenerated after a query/proto/schema/API change. NB: `just golden` spins a
+      # Postgres testcontainer for the schema golden, so this step needs Docker
+      # (present on ubuntu-latest runners).
+      - name: generated-code drift (just gen)
+        run: |
+          just gen
+          git diff --exit-code
+
+      - name: build (converge + workers + conctl, embeds UI)
+        run: just build
+
+      - name: lint (golangci-lint)
+        run: just lint
+
+      # govulncheck with source-reachable analysis; exits nonzero on a reachable
+      # vulnerability, so it doubles as the CI gate the CLAUDE.md security section
+      # calls for. A new upstream CVE can turn this red without a code change — that
+      # is intended; the fix is a toolchain/module bump.
+      - name: vuln scan (govulncheck)
+        run: just vuln
+
+  # Integration lane: the FULL `just test` — the base ./test suite PLUS the
+  # broker/worker chaos, control-plane HA, and streaming-replica soak, all four phases
+  # running CONCURRENTLY (each with its OWN Postgres testcontainer + fleet). This needs
+  # a 4-vCPU runner: on the free 2-vCPU shared runner the four fleets + four containers
+  # thrash and the chaos fault budgets go flaky-red on infra, not code. `ubuntu-latest-4-cores`
+  # is a GitHub-hosted larger runner (4 vCPU / 16 GB) — it must be enabled for the org
+  # (Enterprise plan). If your org named its runner label differently, change it here.
+  # Docker is preinstalled on the hosted image, so the testcontainers need no `services:` block.
+  integration:
+    runs-on: ubuntu-latest-4-cores
+    # Backstop above the recipe's per-phase timeouts (max phase is 15m; concurrent, so
+    # wall-clock ~= slowest phase + cold image pull) in case a runner wedges.
+    timeout-minutes: 40
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-go@v5
+        with:
+          go-version-file: go.mod
+          cache: true
+      - uses: extractions/setup-just@v3
+      - uses: actions/setup-node@v4
+        with:
+          node-version-file: .nvmrc
+
+      - name: full integration suite (base + chaos + HA + replica)
+        run: just test
