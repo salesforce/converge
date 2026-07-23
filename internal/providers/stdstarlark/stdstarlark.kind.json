@@ -1,0 +1,33 @@
+{
+  "kind": "stdstarlark",
+  "kind_version": 1,
+  "max_transient_attempts": 20,
+  "description": "stdstarlark/v1 — GENERIC Starlark composer: an operator-supplied Starlark PROGRAM (a zip of .star files in the providerconfig BUNDLE, compose.star at the root defining compose(spec, config)) fans a resource's spec out into a child DAG \u2014 children + edges (with value flows) + provider configs \u2014 with no per-kind Go. compose() gets the resource's OWN spec (instance inputs) and the EFFECTIVE providerconfig spec (kind default \u2295 per-resource override) as parameterization DATA; other .star files in the bundle are loadable modules via Starlark load(). Return struct(children=[\u2026], edges=[\u2026], configs=[\u2026]); the host marshals it into the typed Outcome the core diffs (recompose / prune / fence / value-flows). Starlark is sandboxed (no I/O unless the host grants a builtin \u2014 only struct + match() here) and the zip is unpacked in memory, so composition is a deterministic pure function of (spec, config, bundle). Edit the .star + re-upload the bundle to change composition with NO redeploy. Its child kinds must have their own applied CRDs; children DELETE with the root.",
+  "spec_schema": {
+    "type": "object",
+    "additionalProperties": true,
+    "description": "The INSTANCE inputs \u2014 the value passed to compose() as `spec`. Shape is up to the program; left open so one stdstarlark kind can back many programs."
+  },
+  "config_schema": {
+    "type": "object",
+    "additionalProperties": true,
+    "description": "Parameterization DATA passed to compose() as `config` (kind default \u2295 per-resource override). Shape is up to the program; left open. The Starlark PROGRAM itself is NOT here \u2014 it rides the opaque providerconfig BUNDLE (`data`), a zip of .star files."
+  },
+  "status_schema": {
+    "type": "object",
+    "additionalProperties": true
+  },
+  "reactions": [
+    {
+      "name": "compose",
+      "trigger": "specChange",
+      "emits": [
+        "children",
+        "status",
+        "conditions"
+      ]
+    }
+  ],
+  "resync_interval_secs": 300,
+  "resync_recomposes": true
+}

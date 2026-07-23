@@ -1,0 +1,123 @@
+{
+  "kind": "classicbom",
+  "kind_version": 1,
+  "max_transient_attempts": 20,
+  "description": "classicbom/v1 — A deployment BOM declaring functional domains, teams, and TGW topology. The composer expands the BOM into accounts/VPCs/TGWs/routes; StatusRollup writes a denormalized team rollup once everything underneath becomes Ready. (Sanitized example \u2014 a real BOM carries many more fields; additionalProperties is open so it still validates.)",
+  "spec_schema": {
+    "additionalProperties": true,
+    "properties": {
+      "deployment_instance": {
+        "type": "object",
+        "additionalProperties": true,
+        "properties": {
+          "name": {
+            "type": "string",
+            "minLength": 1,
+            "description": "Deployment instance name; the prefix for every composed child name."
+          },
+          "functional_domains": {
+            "type": "array",
+            "items": {
+              "type": "object",
+              "additionalProperties": true,
+              "properties": {
+                "name": {
+                  "type": "string",
+                  "minLength": 1
+                },
+                "accounts_only": {
+                  "type": "boolean"
+                },
+                "aws_transit_gateway": {
+                  "type": "object",
+                  "additionalProperties": true,
+                  "properties": {
+                    "enabled": {
+                      "type": "boolean"
+                    }
+                  }
+                },
+                "service_teams": {
+                  "type": "array",
+                  "items": {
+                    "type": "object",
+                    "additionalProperties": true,
+                    "properties": {
+                      "name": {
+                        "type": "string",
+                        "minLength": 1
+                      }
+                    },
+                    "required": [
+                      "name"
+                    ]
+                  }
+                }
+              },
+              "required": [
+                "name"
+              ]
+            }
+          }
+        },
+        "required": [
+          "name"
+        ]
+      }
+    },
+    "required": [
+      "deployment_instance"
+    ],
+    "type": "object"
+  },
+  "status_schema": {
+    "additionalProperties": false,
+    "properties": {
+      "teams": {
+        "items": {
+          "$ref": "#/components/schemas/RolledUpTeam"
+        },
+        "type": [
+          "array",
+          "null"
+        ]
+      }
+    },
+    "required": [
+      "teams"
+    ],
+    "type": "object"
+  },
+  "reactions": [
+    {
+      "name": "compose",
+      "trigger": "specChange",
+      "emits": [
+        "children",
+        "edges",
+        "configs",
+        "status",
+        "conditions"
+      ]
+    },
+    {
+      "name": "rollup",
+      "trigger": "childrenSettled",
+      "emits": [
+        "status",
+        "conditions"
+      ]
+    },
+    {
+      "name": "teardown",
+      "trigger": "deleteRequested",
+      "emits": [
+        "finalizer"
+      ],
+      "finalizer": "classic.demo/classicbom"
+    }
+  ],
+  "finalizer_name": "classic.demo/classicbom",
+  "resync_interval_secs": 3600,
+  "resync_recomposes": true
+}

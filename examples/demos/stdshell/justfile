@@ -1,0 +1,83 @@
+# stdshell demo: the `stdshell` provider — run a user-supplied script (carried INLINE
+# in the resource spec) as a converge kind. The shipped bin/stdworker hosts the
+# stdshell provider: per task it writes spec.script to a temp file, runs it under the
+# configured interpreter (bash by default) with the task's context + timeout,
+# captures stdout/stderr, and records the exit result as status. `just demo` brings
+# up a 3-control + 3-broker cluster + stdworkers, then applies the stdshell CRD, its
+# providerconfig (default interpreter + timeout), and a sample resource that runs a
+# small inline bash script.
+#
+# The scripts run on the worker's host, so whatever they invoke (bash here) must be
+# on the worker's PATH. No Docker — the workers run on the host via the shared
+# dev-local launcher.
+#
+# All recipes run from this directory; the repo root is located via git. Requires
+# the same prereqs as the repo root (`just setup`).
+
+set shell := ["bash", "-uc"]
+
+root := `git rev-parse --show-toplevel`
+here := justfile_directory()
+fixtures := here / "testfixtures"
+# The kind manifest (CRD) ships WITH the provider, not in the demo's fixtures — the
+# demo only supplies the providerconfig (defaults) + a sample resource.
+crd := root / "internal" / "providers" / "stdshell" / "stdshell.kind.json"
+api := "http://localhost:8080"
+conctl := root / "bin" / "conctl"
+
+# Default: list recipes.
+default:
+    @just --list
+
+# Bring up the cluster + the stdworkers (which host the stdshell provider), then
+# apply the demo: the stdshell CRD, its providerconfig, and a sample resource.
+#   3 control + 3 brokers + {{num_workers}} workers (override on the CLI).
+#
+# num_workers should be >= the broker count (3) so every shard tile has a connected
+# worker; 3 covers all three tiles directly.
+[doc("run the cluster + the stdshell provider running an inline script (POSITIONAL: demo [num_workers=3])")]
+demo num_workers="3": build
+    #!/usr/bin/env bash
+    set -euo pipefail
+    echo "== stdshell demo: 3 control + 3 brokers + {{num_workers}} stdworkers (host the stdshell provider) =="
+
+    # Launch the cluster in the background, pointing dev-local at the shipped stdworker
+    # (which hosts the stdshell provider). No STDIO_COMMAND needed — the stdshell
+    # provider reads the script from the resource spec, not an external program.
+    NUM_CONTROL=3 NUM_BROKERS=3 NUM_WORKERS={{num_workers}} \
+    WORKER_BIN="{{root}}/bin/stdworker" \
+      bash "{{root}}/deploy/dev-local.sh" &
+    cluster_pid=$!
+    trap 'kill "$cluster_pid" 2>/dev/null || true' EXIT INT TERM
+
+    echo "== waiting for the control API at {{api}} =="
+    for _ in $(seq 1 60); do
+      curl -fsS "{{api}}/livez" >/dev/null 2>&1 && break || sleep 1
+    done
+
+    # CRD FIRST (a resource needs its kind's manifest to validate), then the
+    # providerconfig, then the resource (which queues until a worker claims it). The
+    # CRD ships with the provider (internal/providers/stdshell/stdshell.kind.json).
+    echo "== applying the stdshell CRD (from the provider package) =="
+    "{{conctl}}" --server "{{api}}" apply --type manifest -f "{{crd}}"
+
+    echo "== applying the stdshell providerconfig (default interpreter + timeout) =="
+    "{{conctl}}" --server "{{api}}" apply --type providerconfig -f "{{fixtures}}/providerconfig-stdshell.json"
+
+    echo "== applying the resource: a stdshell kind running a small inline bash script =="
+    "{{conctl}}" --server "{{api}}" apply --type resource -f "{{fixtures}}/resource-stdshell.json"
+
+    echo
+    echo "== demo applied. Watch it converge in the UI ({{api}}) or:"
+    echo "   {{conctl}} list resources                       # stdshell/hello-stdshell → Ready"
+    echo "   {{conctl}} get resource stdshell/hello-stdshell -o json  # status.stdout carries the script output"
+    echo "== Ctrl+C to tear down the cluster + Postgres."
+    wait "$cluster_pid"
+
+# Build the embedded UI + all binaries (incl. the shipped bin/stdworker, which hosts
+# the stdshell provider) via the ROOT `just build` — the single source of truth. This
+# demo ships NO worker of its own: the stdworker binary hosts the stdshell provider,
+# and this demo only provides the providerconfig + sample resource.
+[doc("build converge + UI + the shipped stdworker (via the root build)")]
+build:
+    just -f "{{root}}/justfile" build

@@ -1,0 +1,44 @@
+/* Feature-grid styles. Each card is a clickable link into the relevant doc, so
+   the hover affordance (lift + accent border) signals it's navigable. */
+
+.features {
+  display: flex;
+  align-items: center;
+  padding: 3rem 0 4rem;
+  width: 100%;
+}
+
+.featureCol {
+  margin-bottom: 1.5rem;
+}
+
+.featureCard {
+  display: block;
+  height: 100%;
+  padding: 1.5rem;
+  border: 1px solid var(--ifm-color-emphasis-200);
+  border-radius: 14px;
+  background: var(--ifm-card-background-color);
+  transition: transform 0.15s ease, border-color 0.15s ease, box-shadow 0.15s ease;
+  color: inherit;
+  text-decoration: none;
+}
+
+.featureCard:hover {
+  transform: translateY(-3px);
+  border-color: var(--ifm-color-primary);
+  box-shadow: 0 12px 32px rgba(40, 60, 110, 0.12);
+  text-decoration: none;
+  color: inherit;
+}
+
+.featureTitle {
+  font-size: 1.2rem;
+  margin-bottom: 0.5rem;
+}
+
+.featureDesc {
+  color: var(--ifm-color-emphasis-700);
+  margin-bottom: 0;
+  line-height: 1.55;
+}

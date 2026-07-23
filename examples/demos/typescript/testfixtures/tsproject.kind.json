@@ -1,0 +1,55 @@
+{
+  "kind": "tsproject",
+  "kind_version": 1,
+  "max_transient_attempts": 20,
+  "description": "tsproject/v1 — A composer reconciled by the TypeScript demo worker. compose() fans a list of teams into one account per team plus a project bucket, wired by a value-flow edge (bucket.account_id ← the first account's status). rollup() aggregates the settled children into the root's Ready condition. Proof the TS SDK does the full compose→children→value-flow→rollup flow a Go composer does, over the same broker + worker.proto.",
+  "spec_schema": {
+    "type": "object",
+    "additionalProperties": false,
+    "properties": {
+      "project": {
+        "type": "string",
+        "minLength": 1,
+        "description": "Project name; the prefix for composed child names. Defaults to the resource name if omitted."
+      },
+      "teams": {
+        "type": "array",
+        "minItems": 1,
+        "description": "Owner teams; one account child is composed per team.",
+        "items": {
+          "type": "string",
+          "minLength": 1
+        }
+      }
+    },
+    "required": [
+      "teams"
+    ]
+  },
+  "status_schema": {
+    "type": "object",
+    "additionalProperties": true
+  },
+  "reactions": [
+    {
+      "name": "compose",
+      "trigger": "specChange",
+      "emits": [
+        "children",
+        "edges",
+        "status",
+        "conditions"
+      ]
+    },
+    {
+      "name": "rollup",
+      "trigger": "childrenSettled",
+      "emits": [
+        "status",
+        "conditions"
+      ]
+    }
+  ],
+  "resync_interval_secs": 300,
+  "resync_recomposes": true
+}

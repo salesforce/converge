@@ -1,0 +1,93 @@
+{
+  "kind": "vpc",
+  "kind_version": 2,
+  "max_transient_attempts": 20,
+  "description": "vpc/v2 — a BREAKING kind_version bump of vpc/v1: adds a REQUIRED `region`. A v1 spec ({account_id, cidr}) is invalid here, so this ships as a NEW kind_version, not an in-place edit. The kind string stays bare `vpc`; the version lives in `kind_version`.",
+  "spec_schema": {
+    "additionalProperties": false,
+    "properties": {
+      "account_id": {
+        "description": "Provider 12-digit account id this VPC lives in.",
+        "maxLength": 12,
+        "minLength": 12,
+        "type": "string"
+      },
+      "cidr": {
+        "description": "VPC CIDR block, e.g. 10.0.0.0/16.",
+        "minLength": 9,
+        "type": "string"
+      },
+      "region": {
+        "description": "Cloud region the VPC is created in (v2, required).",
+        "minLength": 2,
+        "type": "string"
+      }
+    },
+    "required": [
+      "account_id",
+      "cidr",
+      "region"
+    ],
+    "type": "object"
+  },
+  "status_schema": {
+    "additionalProperties": false,
+    "properties": {
+      "vpc_id": {
+        "description": "Provider-issued VPC id.",
+        "type": "string"
+      },
+      "region": {
+        "description": "Region the v2 worker placed the VPC in (echoed from spec).",
+        "type": "string"
+      }
+    },
+    "required": [
+      "vpc_id",
+      "region"
+    ],
+    "type": "object"
+  },
+  "config_schema": {
+    "additionalProperties": false,
+    "description": "vpc/v2 operational config — DIFFERENT shape from v1's: adds default_region. This is why a config is per-(kind, kind_version): a vpc/v2 config validates against THIS schema, and a v1 config (no default_region) is a different document for a different kind_version.",
+    "properties": {
+      "flow_logs_bucket": {
+        "description": "S3 bucket VPC flow logs are written to.",
+        "type": "string"
+      },
+      "default_region": {
+        "description": "Default region for VPCs of this kind/kind_version (v2 config addition).",
+        "type": "string"
+      }
+    },
+    "type": "object"
+  },
+  "reactions": [
+    {
+      "name": "work",
+      "trigger": "specChange",
+      "emits": [
+        "status"
+      ]
+    },
+    {
+      "name": "operate:enable_flow_logs",
+      "trigger": "operation",
+      "emits": [
+        "operationOutput"
+      ],
+      "verb": "enable_flow_logs"
+    },
+    {
+      "name": "teardown",
+      "trigger": "deleteRequested",
+      "emits": [
+        "finalizer"
+      ],
+      "finalizer": "classic.demo/vpc"
+    }
+  ],
+  "finalizer_name": "classic.demo/vpc",
+  "orphan_grace_secs": 30
+}

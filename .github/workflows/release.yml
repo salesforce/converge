@@ -1,0 +1,119 @@
+name: release
+
+# Fires when a SemVer tag (v1.2.3) is pushed — the deliberate "cut a release" act.
+# The tag itself is created by the release-please workflow when its release PR is
+# merged (see release-please.yml), so this workflow is almost never triggered by a
+# hand-pushed tag; it is the build+publish half of the automated flow. It builds
+# the two linux/amd64 images from host-built binaries, pushes them to GHCR tagged
+# with the release version, and attaches a GitHub Release with generated notes.
+on:
+  push:
+    tags: ["v*.*.*"]
+
+# GITHUB_TOKEN scopes: write contents to create the GitHub Release; write packages
+# to push images to ghcr.io/<owner>/… with the built-in token (no registry secret).
+permissions:
+  contents: write
+  packages: write
+
+jobs:
+  release:
+    runs-on: salesforce-Ubuntu
+    steps:
+      # fetch-depth: 0 pulls the full tag history so the `git describe --tags` inside
+      # `just build`/`just docker` resolves the exact release tag (e.g. v0.2.0) into
+      # -X main.BuildVersion — otherwise a shallow clone yields a bare commit hash.
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+      - uses: actions/setup-go@v5
+        with:
+          go-version-file: go.mod
+          cache: false
+      # Same tool+deps cache as ci.yml (see its comment): the release build runs
+      # `just ui` + Go cross-builds via `just docker`/`just docker-stdworker`, which
+      # pull the same off-go.mod tools. Reuses the verify job's key namespace so a
+      # release build benefits from the warm cache a merge already populated.
+      - uses: actions/cache@v4
+        with:
+          path: |
+            ~/.cache/go-build
+            ~/go/pkg/mod
+            !~/go/pkg/mod/golang.org/toolchain*
+          key: ${{ runner.os }}-go-${{ hashFiles('go.sum', 'justfile') }}
+          restore-keys: |
+            ${{ runner.os }}-go-
+      - uses: extractions/setup-just@v3
+      - uses: actions/setup-node@v4
+        with:
+          node-version-file: .nvmrc
+          cache: npm
+          cache-dependency-path: |
+            ui/package-lock.json
+            sdk-ts/package-lock.json
+            examples/demos/typescript/package-lock.json
+
+      # ghcr.io login with the workflow's own token — no external registry secret.
+      - name: Log in to GHCR
+        uses: docker/login-action@v3
+        with:
+          registry: ghcr.io
+          username: ${{ github.actor }}
+          password: ${{ secrets.GITHUB_TOKEN }}
+
+      # The two shipped images:
+      #   - `just docker`           → control/broker + conctl (root Dockerfile)
+      #   - `just docker-stdworker` → the default stdworker (Dockerfile.stdworker)
+      # Both recipes build the binaries on the host FIRST (UI + cross-compiled
+      # linux/amd64) and only COPY them into the image, so no Go toolchain runs in
+      # Docker. GITHUB_REF_NAME on a tag push IS the tag (v0.2.0), so the image tag
+      # matches the BuildVersion `git describe` stamps into the binaries.
+      #
+      # OWNER is lower-cased: GHCR repository paths must be lowercase, but a GitHub
+      # org/user slug may contain uppercase (e.g. Salesforce), which docker rejects.
+      - name: Build + push images
+        run: |
+          set -euo pipefail
+          VER="${GITHUB_REF_NAME}"
+          OWNER="$(echo '${{ github.repository_owner }}' | tr '[:upper:]' '[:lower:]')"
+          CONTROL="ghcr.io/${OWNER}/converge"
+          WORKER="ghcr.io/${OWNER}/converge-stdworker"
+
+          # `docker` tags via the global `image` justfile variable, so the
+          # override is a var ASSIGNMENT and must precede the recipe name
+          # (`just image=… docker`); `just docker image=…` would read `image=…`
+          # as a second recipe name and fail. `docker-stdworker` instead takes a
+          # positional recipe parameter, so its tag is passed as an argument.
+          just image="${CONTROL}:${VER}" docker
+          just docker-stdworker "${WORKER}:${VER}"
+
+          docker push "${CONTROL}:${VER}"
+          docker push "${WORKER}:${VER}"
+
+          # Also move the mutable :latest tag to this release (convenience pull tag;
+          # deployments should still pin an immutable :vX.Y.Z).
+          docker tag "${CONTROL}:${VER}" "${CONTROL}:latest"
+          docker tag "${WORKER}:${VER}" "${WORKER}:latest"
+          docker push "${CONTROL}:latest"
+          docker push "${WORKER}:latest"
+
+      # Cross-compile the shipped binaries (converge/conctl/stdworker) for every
+      # released platform (linux+darwin × amd64+arm64) and package them into
+      # per-platform tarballs + SHA256SUMS under dist/. Pure-Go build, so one runner
+      # produces all targets; converge embeds the UI (built once by the recipe's `ui`
+      # dep). BuildVersion is stamped from GITHUB_REF_NAME (the tag) so a downloaded
+      # binary reports the same version as the image binaries built above.
+      - name: Build release binaries
+        run: just version="${GITHUB_REF_NAME}" release-binaries
+
+      # The GitHub Release. release-please already creates a release when it merges
+      # the release PR; this fills in generated notes, attaches the downloadable
+      # binaries + checksums, and marks it published. If a release for the tag
+      # already exists it is updated (assets added), not duplicated.
+      - name: GitHub Release
+        uses: softprops/action-gh-release@v2
+        with:
+          generate_release_notes: true
+          files: |
+            dist/converge_*.tar.gz
+            dist/SHA256SUMS

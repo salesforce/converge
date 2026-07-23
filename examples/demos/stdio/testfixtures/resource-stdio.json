@@ -1,0 +1,8 @@
+{
+  "kind": "stdio",
+  "kind_version": 1,
+  "name": "hello-agent",
+  "spec": {
+    "run": "echo hello from $(hostname) at generation && date -u +%Y-%m-%dT%H:%M:%SZ"
+  }
+}

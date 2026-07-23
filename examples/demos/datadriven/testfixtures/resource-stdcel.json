@@ -1,0 +1,18 @@
+{
+  "kind": "stdcel",
+  "kind_version": 1,
+  "name": "kro-eager-lovelace",
+  "labels": {
+    "demo": "datadriven",
+    "composer": "stdcel",
+    "config": "custom",
+    "env": "demo"
+  },
+  "provider_config_ref": "stdcel-graph",
+  "spec": {
+    "fd": "fd-00",
+    "team": "eager-lovelace",
+    "account": "eager-lovelace",
+    "image": "nginx:1.27"
+  }
+}

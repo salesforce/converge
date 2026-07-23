@@ -1,0 +1,124 @@
+# TypeScript worker demo: a worker written in TypeScript (@converge/worker-sdk) that
+# reconciles an `account` resource on the SAME broker + worker.proto the Go workers use.
+# Run `just demo` to bring up a 3-control + 3-broker converge cluster + N TypeScript
+# workers, apply the account CRD, and apply an account resource; watch it reach Ready.
+#
+# The point: a worker's language is invisible to the control plane. The broker speaks the
+# public worker.proto; this worker wraps it via the TypeScript SDK, exactly as the Go
+# workers wrap it via sdk-go/converge.
+
+set shell := ["bash", "-uc"]
+
+root := `git rev-parse --show-toplevel`
+here := justfile_directory()
+# CRDs come from this demo's testfixtures/ only (the account kind + resource). The server
+# does no fixture bootstrap; conctl applies them after the API is up.
+fixtures := here / "testfixtures"
+api := "http://localhost:8080"
+# conctl is the kubectl-style CLI (built by the root `just build`) this demo applies/lists
+# objects with; --server points it at the local control API.
+conctl := root / "bin" / "conctl"
+
+# Default: list recipes.
+default:
+    @just --list
+
+# Build converge + UI + conctl (root build), then the TypeScript SDK and this demo worker.
+# The SDK is a file: dependency, so `npm install` links it and `npm run build` in each
+# emits the dist/ the launcher runs. `npm run gen` (before the demo build) regenerates the
+# provider types from the kind manifests (schema-first — src/gen/ is gitignored, rebuilt
+# here). Node (>= 18) + npm are the only extra prerequisites beyond the Go toolchain.
+[doc("build converge + UI + conctl + the TypeScript SDK + this demo worker")]
+build:
+    just -f "{{root}}/justfile" build
+    cd "{{root}}/sdk-ts" && npm install && npm run build
+    cd "{{here}}" && npm install && npm run gen && npm run build
+
+# Bring up the cluster + N TypeScript workers, apply the CRDs (tsproject composer +
+# account & bucket leaves), then a tsproject root that composes an account per team + a
+# bucket wired by a value flow. num_workers MUST be >= the broker count (3): each broker
+# owns a disjoint shard tile and only dispatches a kind to a CONNECTED worker, so fewer
+# workers than brokers strands some tiles. ARGS ARE POSITIONAL (just): `just demo 3`.
+[doc("cluster + a TypeScript composer/worker (POSITIONAL args, e.g. `just demo 3`)")]
+demo num_workers="3": build
+    #!/usr/bin/env bash
+    set -euo pipefail
+    case "{{num_workers}}" in
+      ''|*[!0-9]*)
+        echo "!! num_workers='{{num_workers}}' is not a positive integer (just args are POSITIONAL: just demo <num_workers>)."
+        exit 1 ;;
+    esac
+    if [ "{{num_workers}}" -lt 1 ]; then echo "!! num_workers must be >= 1"; exit 1; fi
+    # Pre-flight: a prior run's processes hold the ports + shared dev Postgres and will
+    # wedge this launch. Warn + bail with the fix rather than auto-kill.
+    if pgrep -f "deploy/dev-local.sh" >/dev/null 2>&1 || pgrep -f "typescript/dist/worker.js" >/dev/null 2>&1; then
+      echo "!! a previous local run is still alive. Clean it first:  just kill"
+      exit 1
+    fi
+    echo "== typescript demo: 3 control + 3 brokers + {{num_workers}} TypeScript workers =="
+    # WORKER_BIN is this demo's shim (execs `node dist/worker.js`), run by the launcher with
+    # BROKER_ADDR / TLS_* / HEALTH_ADDR / WORKER_MAX_PARALLEL / LOG_* in the env — exactly as
+    # a Go demo passes a compiled binary. The worker's language is invisible to the launcher.
+    NUM_CONTROL=3 NUM_BROKERS=3 NUM_WORKERS={{num_workers}} \
+    WORKER_BIN="{{here}}/ts-worker.sh" \
+      bash "{{root}}/deploy/dev-local.sh" &
+    cluster_pid=$!
+    trap 'kill "$cluster_pid" 2>/dev/null || true' EXIT INT TERM
+
+    echo "== waiting for the control API at {{api}} =="
+    for _ in $(seq 1 60); do
+      curl -fsS "{{api}}/livez" >/dev/null 2>&1 && break || sleep 1
+    done
+
+    # Apply ALL CRDs first (tsproject composer + account & bucket leaves): the broker learns
+    # claimable kinds from kind_manifest, and a resource/child needs its kind's manifest to
+    # validate, so the CRDs precede the resources below.
+    echo "== applying the CRDs (tsproject composer + account & bucket leaves) via conctl =="
+    for _k in tsproject account bucket; do
+      "{{conctl}}" --server "{{api}}" apply --type manifest -f "{{fixtures}}/${_k}.kind.json"
+    done
+
+    echo "== applying the tsproject root (composes an account per team + a bucket) =="
+    "{{conctl}}" --server "{{api}}" apply --type resource -f "{{fixtures}}/resource-tsproject.json"
+
+    echo "== applying a standalone account leaf (a hand-applied resource, alongside the composition) =="
+    "{{conctl}}" --server "{{api}}" apply --type resource -f "{{fixtures}}/resource-account.json"
+
+    # READINESS GATE (deliberately staged): the account provider can't mint an id without its
+    # providerconfig (a name pattern), so its ready() is FALSE until the config lands. We apply
+    # the config AFTER the worker connects — so you can WATCH the gate open: the account
+    # children sit unclaimed (the provider advertised RS-, the broker parks that kind), then the
+    # config below flips ready() TRUE (RS+) and they drain to Ready (the composer's bucket then
+    # gets its flowed account_id, and the root rolls up). In production the config is normally
+    # in the DB before the worker starts, so the SDK primes it and the provider is ready from
+    # task one — this pause only makes the flip visible.
+    echo
+    echo "== account children are PARKED (no providerconfig yet → provider ready()=false, RS-)."
+    echo "== check now:  {{conctl}} get resource account/demo-platform -o json | jq .phase   # Reconciling, unclaimed"
+    echo "== applying the account providerconfig in 10s (opens the readiness gate) ..."
+    sleep 10
+    echo "== applying the account providerconfig (id_pattern) — flips the provider ready (RS+) =="
+    "{{conctl}}" --server "{{api}}" apply --type providerconfig -f "{{fixtures}}/providerconfig-account.json"
+
+    echo
+    echo "== demo applied. Watch it converge in the UI ({{api}}) or:"
+    echo "   {{conctl}} list resources                                    # the tsproject root + its composed children"
+    echo "   {{conctl}} get resource tsproject/demo -o json | jq .status  # {\"children_ready\":3,\"phase\":\"ready\"}"
+    echo "   {{conctl}} get resource account/demo-platform -o json | jq .status  # {\"account_id\":\"acc-platform-prod\"} (from the config pattern)"
+    echo "   {{conctl}} get resource bucket/demo-bucket -o json | jq .status  # account_id flowed from the account"
+    echo "== Ctrl+C to tear down the cluster + Postgres."
+    wait "$cluster_pid"
+
+# Typecheck the SDK + this demo without building/running (fast feedback while editing).
+[doc("typecheck the TypeScript SDK + this demo worker")]
+typecheck:
+    cd "{{root}}/sdk-ts" && npm install && npm run typecheck
+    cd "{{here}}" && npm install && npm run gen && npm run typecheck
+
+# Kill a stuck local run (mirrors the root/other demos' `just kill`).
+[doc("kill a stuck local cluster + TypeScript worker processes")]
+kill:
+    -pkill -f "deploy/dev-local.sh" 2>/dev/null || true
+    -pkill -f "typescript/dist/worker.js" 2>/dev/null || true
+    -pkill -f "bin/converge" 2>/dev/null || true
+    @echo "killed local run (if any)."

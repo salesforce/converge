@@ -1,0 +1,29 @@
+{
+  "kind": "statussink",
+  "kind_version": 1,
+  "max_transient_attempts": 20,
+  "description": "statussink/v1 — Reactor: uploads a resource's rolled-up status JSON to an object store when a subscribed lifecycle transition fires. This CRD only REGISTERS the reactor + its config schema; which kind/transition it runs on is a reactor_bindings subscription, not baked in here. The endpoint (BOOTSTRAP) and prefix (WORK-TIME) come from the kind's providerconfig.",
+  "config_schema": {
+    "additionalProperties": false,
+    "properties": {
+      "endpoint": {
+        "description": "Object-store endpoint dialed once at startup (BOOTSTRAP). A missing/invalid value fails Setup; the kind stays pending until a default config supplies it.",
+        "type": "string"
+      },
+      "prefix": {
+        "description": "Key prefix uploaded objects land under (WORK-TIME, live-editable).",
+        "type": "string"
+      }
+    },
+    "type": "object"
+  },
+  "reactions": [
+    {
+      "name": "react",
+      "trigger": "reactor",
+      "emits": [
+        "sideEffect"
+      ]
+    }
+  ]
+}

@@ -1,0 +1,7 @@
+# chart-testing (ct) config — https://github.com/helm/chart-testing
+# Used by `ct lint --config deploy/helm/ct.yaml`.
+chart-dirs:
+  - deploy/helm
+target-branch: main
+validate-maintainers: false
+# Charts get an install/lint pass against each deploy/helm/<chart>/ci/*-values.yaml.

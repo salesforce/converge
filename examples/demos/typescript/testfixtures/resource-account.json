@@ -1,0 +1,13 @@
+{
+  "kind": "account",
+  "kind_version": 1,
+  "name": "ts-demo-account",
+  "labels": {
+    "demo": "typescript",
+    "kind": "account"
+  },
+  "spec": {
+    "team_name": "platform",
+    "email": "platform-root@example.com"
+  }
+}

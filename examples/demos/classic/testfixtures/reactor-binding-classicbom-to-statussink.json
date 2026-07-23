@@ -1,0 +1,8 @@
+{
+  "name": "classicbom-to-statussink",
+  "watch_kind": "classicbom",
+  "transition": "synced",
+  "reactor": "statussink",
+  "reactor_version": 1,
+  "enabled": true
+}

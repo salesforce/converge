@@ -1,0 +1,77 @@
+# docker-compose for the stdterraform demo's Docker-side services:
+#   - localstack: the fake AWS (S3) that backs both the Terraform STATE and the
+#     resources the sample module creates. It SELF-SEEDS S3 via a ready.d init
+#     hook (creates the buckets + uploads the bundle) — no host aws CLI, no race.
+#   - tfworker: ONE worker running the SHIPPED stdworker image (cmd/stdworker),
+#     which hosts the stdterraform provider (alongside stdio + stdshell) and bundles
+#     tofu + aws + gcloud + az + git + curl. It connects to a SINGLE broker running on
+#     the HOST (control/broker/Postgres come up via deploy/dev-local.sh with
+#     NUM_WORKERS=0), at host.docker.internal.
+#
+# ONE worker is enough for the whole fleet. The 3 host brokers (9090/9091/9092)
+# each own a disjoint shard tile; the worker connects to just one of them, and
+# broker↔broker RELAY drains the other two tiles to it (the broker with the worker
+# pulls spare claimed work from its peers and forwards results back — no worker↔
+# broker mesh, no worker DB access). Relay is wired by dev-local.sh, which sets
+# each broker's RELAY_ADVERTISE_ADDR. The worker reaches LocalStack over the compose
+# network at http://localstack:4566 — the URL the stdterraform providerconfig carries,
+# so the aws CLI + the tofu S3 backend both resolve it.
+#
+# Brought up by `just demo`.
+
+services:
+  localstack:
+    # Pinned >= 3.8: the terraform provider's s3 backend uses NATIVE state locking
+    # (use_lockfile), which relies on S3 conditional writes (PutObject If-None-Match).
+    # LocalStack added conditional-write support around 3.8; an older tag would fail
+    # lock acquisition. Real AWS S3 supports it since Nov 2024.
+    image: localstack/localstack:3.8
+    ports:
+      - "4566:4566"          # exposed to the host too (UI/debugging + conctl checks)
+    environment:
+      SERVICES: s3
+      DEBUG: "0"
+    volumes:
+      # Init hook: seeds S3 (buckets + bundle upload) IN-CONTAINER once ready — no
+      # host aws CLI, no seeding race. The bundle is mounted read-only so the hook
+      # can `awslocal s3 cp` it to the bucket a terraform resource points at.
+      - ./testfixtures/localstack-init.sh:/etc/localstack/init/ready.d/seed.sh:ro
+      - ./testfixtures/bundle.tar.gz:/seed/bundle.tar.gz:ro
+    healthcheck:
+      # Ready only once the init hook has created the bundle bucket + uploaded it,
+      # so a dependent (tfworker) that waits for health sees a fully-seeded S3.
+      test: ["CMD", "sh", "-c", "awslocal s3api head-object --bucket tf-bundles --key hello.tar.gz"]
+      interval: 3s
+      timeout: 5s
+      retries: 30
+
+  # A SINGLE worker, connected to ONE broker (9090). Broker↔broker relay drains
+  # the other two brokers' tiles (9091/9092) to it, so one worker serves the whole
+  # fleet — the point of the relay layer.
+  tfworker:
+    # Uses the SHIPPED stdworker image (does NOT build it here) — `just image` builds
+    # `converge-stdworker` from the repo-root Dockerfile.stdworker before `compose up`.
+    image: converge-stdworker
+    depends_on:
+      localstack:
+        condition: service_healthy
+    environment:
+      BROKER_ADDR: "http://host.docker.internal:9090"
+      HEALTH_ADDR: ":8090"
+      WORKER_MAX_PARALLEL: "8"
+      # Scope this worker to just the stdterraform kind for the demo (the image also
+      # hosts stdio + stdshell; WORKER_KINDS narrows what it claims).
+      WORKER_KINDS: "stdterraform"
+      LOG_FORMAT: json
+      LOG_LEVEL: info
+      # AWS credentials via the standard default provider chain — the stdterraform
+      # provider, tofu, and the aws CLI all read these from the env. LocalStack accepts any
+      # non-empty pair; "test"/"test" is the convention. Swap for real creds (or
+      # mount ~/.aws) to target real AWS.
+      AWS_ACCESS_KEY_ID: "test"
+      AWS_SECRET_ACCESS_KEY: "test"
+      AWS_DEFAULT_REGION: "us-east-1"
+    # host.docker.internal resolves the host from inside the container (Docker
+    # Desktop provides it; on Linux this mapping does).
+    extra_hosts:
+      - "host.docker.internal:host-gateway"

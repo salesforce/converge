@@ -1,0 +1,10 @@
+{
+  "name": "statussink",
+  "kind": "statussink",
+  "kind_version": 1,
+  "is_default": true,
+  "spec": {
+    "endpoint": "s3://classic-bom-status",
+    "prefix": "rolled-up/"
+  }
+}

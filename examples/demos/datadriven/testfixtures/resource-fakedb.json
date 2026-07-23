@@ -1,0 +1,13 @@
+{
+  "kind": "fakedb",
+  "kind_version": 1,
+  "name": "sample-fakedb",
+  "labels": {
+    "demo": "datadriven",
+    "sample": "manual",
+    "kind": "fakedb"
+  },
+  "spec": {
+    "account_id": "platform"
+  }
+}

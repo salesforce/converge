@@ -1,0 +1,51 @@
+# chart-testing (ct) lint case: all tiers on with TLS + mTLS + SPIFFE, HPA,
+# metrics + ServiceMonitor, NetworkPolicy, a worker-scoped client cert, and an
+# externally-managed DSN Secret. Exercises the heavily-branched paths.
+database:
+  existingSecret:
+    name: ct-db
+    key: dsn
+  iamAuth: true
+
+stdWorker:
+  enabled: true
+  autoscaling:
+    enabled: true
+  tls:
+    secretName: ct-worker-tls
+
+serviceAccount:
+  name: ct-irsa
+
+control:
+  autoscaling:
+    enabled: true
+broker:
+  autoscaling:
+    enabled: true
+
+tls:
+  enabled: true
+  secretName: ct-tls
+  apiSpiffeIDs:
+    - spiffe://example.org/ns/converge/sa/conctl
+  workerSpiffeIDs:
+    - spiffe://example.org/ns/converge/sa/worker
+  meshSpiffeIDs:
+    - spiffe://example.org/ns/converge/sa/broker
+
+metrics:
+  enabled: true
+  serviceMonitor:
+    enabled: true
+
+networkPolicy:
+  enabled: true
+  egress:
+    restrict: true
+
+commonLabels:
+  team: platform
+
+ingress:
+  enabled: true

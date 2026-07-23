@@ -1,0 +1,35 @@
+{
+  "kind": "fakedb",
+  "kind_version": 1,
+  "max_transient_attempts": 20,
+  "description": "fakedb/v1 — Simulation leaf that PRODUCES a db_endpoint: on reconcile it derives a deterministic fake endpoint from spec.account_id and writes it to status. The SECOND upstream of the dependency + value-flow demo (sibling of fakevpc); a composer emits a ValueFlow from this status.db_endpoint into a downstream fakeapp's spec, so fakeapp depends on BOTH fakevpc and fakedb.",
+  "spec_schema": {
+    "type": "object",
+    "additionalProperties": true,
+    "properties": {
+      "account_id": {
+        "type": "string",
+        "description": "Account this fake DB lives in; the produced db_endpoint is derived from it."
+      }
+    }
+  },
+  "status_schema": {
+    "type": "object",
+    "additionalProperties": true,
+    "properties": {
+      "db_endpoint": {
+        "type": "string",
+        "description": "The produced DB endpoint downstream resources consume via a ValueFlow."
+      }
+    }
+  },
+  "reactions": [
+    {
+      "name": "work",
+      "trigger": "specChange",
+      "emits": [
+        "status"
+      ]
+    }
+  ]
+}

@@ -1,0 +1,123 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 1040 640" font-family="-apple-system, BlinkMacSystemFont, 'Segoe UI', Inter, Roboto, sans-serif">
+  <defs>
+    <linearGradient id="brand" x1="0" y1="0" x2="1" y2="1">
+      <stop offset="0" stop-color="#2563eb"/>
+      <stop offset="1" stop-color="#3b82f6"/>
+    </linearGradient>
+    <marker id="arrow" viewBox="0 0 10 10" refX="8" refY="5" markerWidth="10" markerHeight="10" markerUnits="userSpaceOnUse" orient="auto-start-reverse">
+      <path d="M0 0.5L9 5L0 9.5z" fill="#b6c0d4"/>
+    </marker>
+    <marker id="arrowBlue" viewBox="0 0 10 10" refX="8" refY="5" markerWidth="11" markerHeight="11" markerUnits="userSpaceOnUse" orient="auto-start-reverse">
+      <path d="M0 0.5L9 5L0 9.5z" fill="#2563eb"/>
+    </marker>
+    <marker id="arrowFail" viewBox="0 0 10 10" refX="8" refY="5" markerWidth="12" markerHeight="12" markerUnits="userSpaceOnUse" orient="auto-start-reverse">
+      <path d="M0 0.5L9 5L0 9.5z" fill="#dc2626"/>
+    </marker>
+    <style>
+      .lbl{fill:#1a2233;font-weight:600;font-size:13px;}
+      .sub{fill:#5d6a82;font-size:11px;}
+      .tiny{fill:#5d6a82;font-size:10px;}
+      .zonelbl{fill:#8593ab;font-size:11px;font-weight:600;letter-spacing:.03em;}
+      .good{fill:#0f9d58;font-size:10px;font-weight:600;}
+      .warn{fill:#dc2626;font-size:10px;font-weight:600;}
+    </style>
+  </defs>
+
+  <text x="520" y="34" text-anchor="middle" fill="#1a2233" font-size="20" font-weight="700">Converge — High Availability &amp; DB Failover</text>
+  <text x="520" y="55" text-anchor="middle" class="sub" font-size="12">Stateless pods · endpoint-addressed Postgres · cloud-provider primary promotion</text>
+
+  <!-- ===================== Converge fleet (stateless) ===================== -->
+  <rect x="30" y="78" width="980" height="188" rx="14" fill="#f5f7fb" stroke="#dbe1ec" stroke-width="1.5" stroke-dasharray="5 4"/>
+  <text x="48" y="99" class="zonelbl">CONVERGE FLEET — stateless, horizontally scaled (k8s Deployments)</text>
+
+  <!-- control -->
+  <rect x="48" y="112" width="236" height="140" rx="12" fill="#ffffff" stroke="#e2e6ef" stroke-width="1.5"/>
+  <rect x="48" y="112" width="236" height="28" rx="12" fill="url(#brand)"/>
+  <rect x="48" y="126" width="236" height="14" fill="url(#brand)"/>
+  <text x="166" y="131" text-anchor="middle" fill="#fff" font-size="12.5" font-weight="700">control pods</text>
+  <text x="62" y="160" class="sub">sweepers · migrations · API + UI</text>
+  <text x="62" y="180" class="tiny">drainer · reaper · resyncer (pollLoop)</text>
+  <text x="62" y="198" class="tiny">/livez DB-free · /readyz pings primary</text>
+  <text x="62" y="216" class="tiny">DATABASE_URL → writer</text>
+  <text x="62" y="232" class="tiny">DATABASE_READ_URL → reader</text>
+
+  <!-- broker -->
+  <rect x="300" y="112" width="212" height="140" rx="12" fill="#ffffff" stroke="#e2e6ef" stroke-width="1.5"/>
+  <rect x="300" y="112" width="212" height="28" rx="12" fill="url(#brand)"/>
+  <rect x="300" y="126" width="212" height="14" fill="url(#brand)"/>
+  <text x="406" y="131" text-anchor="middle" fill="#fff" font-size="12.5" font-weight="700">broker pods</text>
+  <text x="314" y="160" class="sub">mesh — workers dial + pull</text>
+  <text x="314" y="180" class="tiny">claims work_queue on primary</text>
+  <text x="314" y="198" class="tiny">FOR UPDATE SKIP LOCKED</text>
+  <text x="314" y="216" class="tiny">LISTEN/NOTIFY —</text>
+  <text x="314" y="232" class="tiny">auto-reconnect + catch-up</text>
+
+  <!-- workers -->
+  <rect x="528" y="112" width="212" height="140" rx="12" fill="#ffffff" stroke="#e2e6ef" stroke-width="1.5"/>
+  <rect x="528" y="112" width="212" height="28" rx="12" fill="#64748b"/>
+  <rect x="528" y="126" width="212" height="14" fill="#64748b"/>
+  <text x="634" y="131" text-anchor="middle" fill="#fff" font-size="12.5" font-weight="700">worker pods</text>
+  <text x="542" y="160" class="sub">dumb — run handler code</text>
+  <text x="542" y="180" class="tiny">no direct DB connection</text>
+  <text x="542" y="198" class="tiny">dial brokers over the mesh</text>
+  <text x="542" y="216" class="tiny">provider execution only</text>
+  <text x="542" y="232" class="tiny">(Terraform / stdio / shell)</text>
+
+  <!-- resilience callout -->
+  <rect x="756" y="112" width="238" height="140" rx="12" fill="#f0fdf4" stroke="#bbf7d0" stroke-width="1.5"/>
+  <text x="875" y="133" text-anchor="middle" class="good" font-size="11.5">POD SURVIVES FAILOVER</text>
+  <text x="772" y="157" class="tiny">• pollLoop logs error, continues</text>
+  <text x="772" y="176" class="tiny">• no os.Exit / panic on DB error</text>
+  <text x="772" y="195" class="tiny">• liveness DB-free → no SIGKILL</text>
+  <text x="772" y="214" class="tiny">• pool prunes dead conns (30s)</text>
+  <text x="772" y="233" class="tiny">• IAM token re-minted per connect</text>
+
+  <!-- fleet -> endpoints -->
+  <path d="M406 252 L406 300" stroke="#2563eb" stroke-width="2" fill="none" marker-end="url(#arrowBlue)"/>
+  <text x="416" y="280" class="sub" fill="#2563eb">pgx pool · BeforeConnect</text>
+
+  <!-- ===================== Managed Postgres ===================== -->
+  <rect x="30" y="300" width="980" height="308" rx="14" fill="#f5f7fb" stroke="#dbe1ec" stroke-width="1.5" stroke-dasharray="5 4"/>
+  <text x="48" y="321" class="zonelbl">MANAGED POSTGRES — Aurora · AlloyDB · Cloud SQL HA · Azure Flexible Server</text>
+
+  <!-- Endpoints (stable DNS) -->
+  <rect x="330" y="334" width="380" height="56" rx="12" fill="#eff6ff" stroke="#bfdbfe" stroke-width="1.5"/>
+  <text x="520" y="356" text-anchor="middle" class="lbl" fill="#1d4ed8" font-size="12.5">STABLE CLUSTER ENDPOINTS (DNS)</text>
+  <text x="520" y="376" text-anchor="middle" class="tiny">writer → current primary · reader → replicas</text>
+
+  <path d="M520 390 L520 416" stroke="#b6c0d4" stroke-width="1.6" fill="none" marker-end="url(#arrow)"/>
+
+  <!-- failover banner -->
+  <text x="520" y="436" text-anchor="middle" class="warn" font-size="10.5">✗ primary fails → provider promotes standby (~30s on Aurora) → DNS repoints → pods reconnect</text>
+
+  <!-- AZ A: primary -->
+  <rect x="60" y="470" width="410" height="122" rx="12" fill="#fbfcfe" stroke="#dbe1ec" stroke-width="1.5" stroke-dasharray="5 4"/>
+  <text x="78" y="490" class="zonelbl">AVAILABILITY ZONE A</text>
+  <rect x="90" y="500" width="350" height="80" rx="12" fill="#ffffff" stroke="#e2e6ef" stroke-width="1.5"/>
+  <rect x="90" y="500" width="350" height="26" rx="12" fill="#0f9d58"/>
+  <rect x="90" y="513" width="350" height="13" fill="#0f9d58"/>
+  <text x="265" y="518" text-anchor="middle" fill="#fff" font-size="12.5" font-weight="700">PRIMARY (writer)</text>
+  <text x="106" y="546" class="sub">all writes · engine traffic · migrations</text>
+  <text x="106" y="566" class="tiny">graph / rollup / value-flow in PL/pgSQL</text>
+
+  <!-- AZ B: standby -->
+  <rect x="570" y="470" width="410" height="122" rx="12" fill="#fbfcfe" stroke="#dbe1ec" stroke-width="1.5" stroke-dasharray="5 4"/>
+  <text x="588" y="490" class="zonelbl">AVAILABILITY ZONE B</text>
+  <rect x="600" y="500" width="350" height="80" rx="12" fill="#ffffff" stroke="#e2e6ef" stroke-width="1.5"/>
+  <rect x="600" y="500" width="350" height="26" rx="12" fill="#64748b"/>
+  <rect x="600" y="513" width="350" height="13" fill="#64748b"/>
+  <text x="775" y="518" text-anchor="middle" fill="#fff" font-size="12.5" font-weight="700">STANDBY / REPLICA (reader)</text>
+  <text x="616" y="546" class="sub">hot standby · serves UI reads</text>
+  <text x="616" y="566" class="warn">promoted to writer on primary loss</text>
+
+  <!-- replication arrow -->
+  <path d="M440 540 L600 540" stroke="#b6c0d4" stroke-width="1.6" fill="none" marker-end="url(#arrow)"/>
+  <text x="520" y="533" text-anchor="middle" class="tiny">replicate</text>
+
+  <!-- failover arrow (curved, red) — drawn LAST so it renders on top of the AZ
+       boxes; arcs from the primary zone-box top up over the gap and down onto the
+       standby zone-box top. Endpoints sit ON the box tops (y=470), apex ~y=452
+       (clear of the banner text at y=436). -->
+  <path d="M265 470 C265 448 660 448 775 466" stroke="#dc2626" stroke-width="2" stroke-dasharray="6 4" fill="none" marker-end="url(#arrowFail)"/>
+</svg>

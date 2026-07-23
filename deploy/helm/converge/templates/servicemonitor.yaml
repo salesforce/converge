@@ -1,0 +1,44 @@
+{{- if and .Values.metrics.enabled .Values.metrics.serviceMonitor.enabled }}
+{{- $sm := .Values.metrics.serviceMonitor }}
+# ── ServiceMonitor (prometheus-operator) ─────────────────────────────────────
+# Scrapes the plaintext health/metrics port (:8081) on control + broker pods, so
+# scraping never crosses the (m)TLS API/Connect listeners. Requires the CRD
+# (monitoring.coreos.com/v1) — install the prometheus-operator first. Add labels
+# under metrics.serviceMonitor.labels to match your operator's serviceMonitorSelector.
+apiVersion: monitoring.coreos.com/v1
+kind: ServiceMonitor
+metadata:
+  name: {{ include "converge.fullname" . }}
+  namespace: {{ $sm.namespace | default .Release.Namespace }}
+  labels:
+    {{- include "converge.labels" . | nindent 4 }}
+    {{- with $sm.labels }}{{ toYaml . | nindent 4 }}{{- end }}
+  {{- with (include "converge.commonAnnotations" .) }}
+  annotations:
+    {{- . | nindent 4 }}
+  {{- end }}
+spec:
+  namespaceSelector:
+    matchNames:
+      - {{ .Release.Namespace }}
+  selector:
+    matchLabels:
+      {{- include "converge.selectorLabels" . | nindent 6 }}
+  # metrics ride the health port, which the tier Services don't publish, so scrape
+  # the pods by endpoint on the metrics port directly.
+  podTargetLabels:
+    - app.kubernetes.io/component
+  endpoints:
+    - targetPort: {{ .Values.metrics.port }}
+      path: {{ .Values.metrics.path }}
+      interval: {{ $sm.interval }}
+      scrapeTimeout: {{ $sm.scrapeTimeout }}
+      {{- with $sm.relabelings }}
+      relabelings:
+        {{- toYaml . | nindent 8 }}
+      {{- end }}
+      {{- with $sm.metricRelabelings }}
+      metricRelabelings:
+        {{- toYaml . | nindent 8 }}
+      {{- end }}
+{{- end }}

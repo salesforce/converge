@@ -1,0 +1,11 @@
+version: v2
+# TypeScript codegen for the PUBLIC worker contract only (worker.proto — the same .proto
+# the Go SDK generates pkg/workerpb from, and the ONLY thing shared with the broker). The
+# mesh proto is deliberately NOT generated: a worker SDK never sees it. Run via `npm run gen`
+# (which invokes buf from the repo root with --path worker.proto and --output sdk-ts/gen).
+plugins:
+  - local: protoc-gen-es
+    out: sdk-ts/gen
+    opt:
+      - target=ts
+      - import_extension=js

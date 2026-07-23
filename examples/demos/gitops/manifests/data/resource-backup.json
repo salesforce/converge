@@ -1,0 +1,11 @@
+{
+  "type": "resource",
+  "kind": "stdshell",
+  "kind_version": 1,
+  "name": "data-backup",
+  "labels": {},
+  "spec": {
+    "script": "#!/usr/bin/env bash\nset -euo pipefail\necho \"backup job for the data app\"\n",
+    "timeout_seconds": 120
+  }
+}

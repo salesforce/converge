@@ -1,0 +1,62 @@
+{
+  "kind": "account",
+  "kind_version": 1,
+  "max_transient_attempts": 20,
+  "description": "account/v1 — A cloud account owned by a single team, reconciled by the TypeScript demo worker. Its readiness is GATED on a providerconfig: the provider can't mint an id without an id_pattern, so it advertises RS- (work parks) until the config lands, then RS+ (work flows).",
+  "spec_schema": {
+    "additionalProperties": false,
+    "properties": {
+      "email": {
+        "description": "Root-account contact email.",
+        "type": "string"
+      },
+      "team_name": {
+        "description": "Owner team name; appears in tags.",
+        "minLength": 1,
+        "type": "string"
+      }
+    },
+    "required": [
+      "team_name",
+      "email"
+    ],
+    "type": "object"
+  },
+  "config_schema": {
+    "additionalProperties": false,
+    "type": "object",
+    "description": "The account provider's config: the name pattern it needs before it can mint an id. The provider's readiness is gated on this — no config, no work.",
+    "properties": {
+      "id_pattern": {
+        "description": "Account-id template; `{team_name}` is substituted at work time, e.g. \"acc-{team_name}-prod\".",
+        "type": "string",
+        "minLength": 1
+      }
+    },
+    "required": [
+      "id_pattern"
+    ]
+  },
+  "status_schema": {
+    "additionalProperties": false,
+    "properties": {
+      "account_id": {
+        "description": "Provider-issued account id, formatted from the config's id_pattern.",
+        "type": "string"
+      }
+    },
+    "required": [
+      "account_id"
+    ],
+    "type": "object"
+  },
+  "reactions": [
+    {
+      "name": "work",
+      "trigger": "specChange",
+      "emits": [
+        "status"
+      ]
+    }
+  ]
+}

@@ -1,0 +1,35 @@
+apiVersion: v2
+name: converge
+description: |
+  Converge — a Kubernetes-style resource orchestrator. By default deploys the
+  control plane (sweepers + drainer + reaper + HTTP API) and the broker/gateway
+  (owns work_queue shard tiles, claims + fans work out over Connect). An optional,
+  off-by-default stdworker tier (the only tier with provider code + an AWS
+  identity) can be enabled, or you run your own provider workers separately. All
+  tiers are plain Deployments that shard dynamically from the cluster_members
+  registry — scale a tier by editing its replica count; the cluster re-tiles itself.
+type: application
+# Chart version — bump on chart changes (SemVer). Independent of appVersion.
+version: 0.1.0
+# The converge application version this chart's defaults target. The chart tracks
+# the rolling image.tag (default "latest"), so appVersion is "latest" to match —
+# shown in `helm list`. Pin image.tag or image.digest for a specific version.
+appVersion: "latest"
+kubeVersion: ">=1.21.0-0"
+keywords:
+  - orchestrator
+  - reconciliation
+  - control-plane
+  - broker
+home: https://github.com/salesforce/converge
+sources:
+  - https://github.com/salesforce/converge
+icon: https://raw.githubusercontent.com/salesforce/converge/main/ui/public/logo.png
+maintainers:
+  - name: converge maintainers
+    url: https://github.com/salesforce/converge
+annotations:
+  # ArtifactHub metadata (https://artifacthub.io/docs/topics/annotations/helm/).
+  artifacthub.io/category: integration-delivery
+  artifacthub.io/license: Apache-2.0
+  artifacthub.io/prerelease: "true"

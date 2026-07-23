@@ -1,0 +1,39 @@
+{
+  "name": "@converge/worker-sdk",
+  "version": "0.1.0",
+  "description": "Converge worker SDK for TypeScript: implement a Provider, call serve(), and the SDK handles the broker relationship (dial, WorkStream, config, readiness, drain).",
+  "type": "module",
+  "types": "./dist/src/index.d.ts",
+  "exports": {
+    ".": {
+      "types": "./dist/src/index.d.ts",
+      "default": "./dist/src/index.js"
+    }
+  },
+  "files": [
+    "dist",
+    "README.md"
+  ],
+  "scripts": {
+    "gen": "cd .. && PATH=sdk-ts/node_modules/.bin:$PATH buf generate --template sdk-ts/buf.gen.yaml --path proto/converge/worker/v1/worker.proto",
+    "typecheck": "tsc --noEmit",
+    "clean": "rm -rf dist",
+    "build": "npm run clean && tsc -p tsconfig.build.json",
+    "prepare": "npm run build",
+    "prepublishOnly": "npm run build"
+  },
+  "engines": {
+    "node": ">=22 <25"
+  },
+  "dependencies": {
+    "@bufbuild/protobuf": "^2.2.0",
+    "@connectrpc/connect": "^2.0.0",
+    "@connectrpc/connect-node": "^2.0.0"
+  },
+  "devDependencies": {
+    "@bufbuild/buf": "^1.47.0",
+    "@bufbuild/protoc-gen-es": "^2.2.0",
+    "@types/node": "^24.0.0",
+    "typescript": "~6.0.2"
+  }
+}
