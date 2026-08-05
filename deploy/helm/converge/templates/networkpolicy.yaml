@@ -1,0 +1,104 @@
+{{- if .Values.networkPolicy.enabled }}
+{{- $np := .Values.networkPolicy }}
+# ── NetworkPolicy (opt-in) ───────────────────────────────────────────────────
+# Ingress is scoped to each tier's REAL ports; egress is optionally capped to DNS
+# + the DB. Requires a CNI that enforces NetworkPolicy. Default-off (see
+# networkPolicy.enabled). One policy per enabled tier.
+{{- if .Values.control.enabled }}
+{{- $sel := dict "ctx" . "component" "control" }}
+apiVersion: networking.k8s.io/v1
+kind: NetworkPolicy
+metadata:
+  name: {{ include "converge.fullname" . }}-control
+  namespace: {{ .Release.Namespace }}
+  labels:
+    {{- include "converge.tierLabels" $sel | nindent 4 }}
+spec:
+  podSelector:
+    matchLabels:
+      {{- include "converge.tierSelectorLabels" $sel | nindent 6 }}
+  policyTypes:
+    - Ingress
+    {{- if $np.egress.restrict }}
+    - Egress
+    {{- end }}
+  ingress:
+    # API :8080. apiIngressCIDRs empty → allow from anywhere (typical when an
+    # Ingress/LB fronts the API); otherwise restrict to those CIDRs. The plaintext
+    # health/metrics :8081 is opened whenever the app runs that listener — under TLS
+    # (kubelet probes can't do the mTLS handshake on :8080) OR when metrics are on
+    # (Prometheus scrapes /metrics there). Mirrors the broker's always-open :8081.
+    - ports:
+        - { port: {{ .Values.service.api.port }}, protocol: TCP }
+        {{- if or .Values.tls.enabled .Values.metrics.enabled }}
+        - { port: 8081, protocol: TCP }
+        {{- end }}
+      {{- with $np.apiIngressCIDRs }}
+      from:
+        {{- range . }}
+        - ipBlock: { cidr: {{ . | quote }} }
+        {{- end }}
+      {{- end }}
+  {{- if $np.egress.restrict }}
+  egress:
+    {{- include "converge.npEgressRules" . | nindent 4 }}
+  {{- end }}
+{{- end }}
+{{- if .Values.broker.enabled }}
+---
+{{- $sel := dict "ctx" . "component" "broker" }}
+apiVersion: networking.k8s.io/v1
+kind: NetworkPolicy
+metadata:
+  name: {{ include "converge.fullname" . }}-broker
+  namespace: {{ .Release.Namespace }}
+  labels:
+    {{- include "converge.tierLabels" $sel | nindent 4 }}
+spec:
+  podSelector:
+    matchLabels:
+      {{- include "converge.tierSelectorLabels" $sel | nindent 6 }}
+  policyTypes:
+    - Ingress
+    {{- if $np.egress.restrict }}
+    - Egress
+    {{- end }}
+  ingress:
+    # Connect :9090 (workers + peer brokers) and health :8081 (kubelet). Restrict the
+    # Connect clients to brokerClientPodLabels when set; else allow in-namespace.
+    - ports:
+        - { port: {{ .Values.service.broker.port }}, protocol: TCP }
+        - { port: 8081, protocol: TCP }
+      {{- with $np.brokerClientPodLabels }}
+      from:
+        - podSelector:
+            matchLabels:
+              {{- toYaml . | nindent 14 }}
+      {{- end }}
+  {{- if $np.egress.restrict }}
+  egress:
+    {{- include "converge.npEgressRules" . | nindent 4 }}
+  {{- end }}
+{{- end }}
+{{- if .Values.stdWorker.enabled }}
+---
+{{- $sel := dict "ctx" . "component" "stdworker" }}
+apiVersion: networking.k8s.io/v1
+kind: NetworkPolicy
+metadata:
+  name: {{ include "converge.tierFullname" (dict "ctx" . "suffix" "stdworker") }}
+  namespace: {{ .Release.Namespace }}
+  labels:
+    {{- include "converge.tierLabels" $sel | nindent 4 }}
+spec:
+  podSelector:
+    matchLabels:
+      {{- include "converge.tierSelectorLabels" $sel | nindent 6 }}
+  policyTypes:
+    - Ingress
+  ingress:
+    # Only the kubelet health probe reaches the worker (it dials OUT to the broker).
+    - ports:
+        - { port: 8081, protocol: TCP }
+{{- end }}
+{{- end }}

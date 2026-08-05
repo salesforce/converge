@@ -1,0 +1,10 @@
+{{- /*
+Arbitrary user-supplied manifests (extraObjects) rendered verbatim with the
+release — an escape hatch for RBAC, an ExternalSecret, a PriorityClass, a
+cert-manager Certificate, etc. Each list entry is a YAML string; `tpl` is applied
+so entries may reference chart values with {{ }}.
+*/ -}}
+{{- range .Values.extraObjects }}
+---
+{{ tpl . $ }}
+{{- end }}

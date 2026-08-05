@@ -1,0 +1,111 @@
+# stdterraform demo: the SHIPPED stdterraform provider (internal/providers/stdterraform)
+# as a converge kind. A `stdterraform` resource's spec points at a Terraform module
+# (here a *.tar.gz in S3); a worker fetches it, injects an S3 state backend (native
+# lockfile locking), and runs a real `tofu apply` against LocalStack (state in S3), with
+# `tofu destroy` on delete. Unlike the other demos the worker runs in DOCKER — the
+# SHIPPED stdworker image (cmd/stdworker), which bundles tofu + aws + gcloud + az + git
+# + curl — alongside a LocalStack container; control/broker/Postgres run on the host via
+# the shared dev-local launcher.
+#
+# Prereqs beyond the repo root's `just setup`: docker (compose v2). No local
+# terraform/aws CLI needed — those live in the stdworker image.
+#
+# All recipes run from this directory; the repo root is located via git.
+
+set shell := ["bash", "-uc"]
+
+root := `git rev-parse --show-toplevel`
+here := justfile_directory()
+fixtures := here / "testfixtures"
+# The kind manifest (CRD) ships WITH the provider, not in the demo's fixtures — the
+# demo only supplies the providerconfig (where-to-run) + a sample resource.
+crd := root / "internal" / "providers" / "stdterraform" / "stdterraform.kind.json"
+api := "http://localhost:8080"
+conctl := root / "bin" / "conctl"
+compose := "docker compose -f " + here / "docker-compose.yml"
+
+# Default: list recipes.
+default:
+    @just --list
+
+# Bring up the whole demo: control/broker/Postgres on the host (NO host workers),
+# LocalStack + a stdworker in Docker, seed S3 with the HCL bundle, then apply the CRD +
+# providerconfig + a stdterraform resource. Watch it converge in the UI.
+#
+# There are 3 brokers (9090/9091/9092), each owning a disjoint shard tile. A SINGLE
+# worker connects to ONE broker; broker↔broker RELAY drains the other two tiles to
+# it (dev-local.sh sets each broker's RELAY_ADVERTISE_ADDR) — so one worker serves
+# the whole fleet.
+[doc("run the cluster + the real stdterraform provider (tofu apply) against LocalStack in Docker")]
+demo: build image
+    #!/usr/bin/env bash
+    set -euo pipefail
+    echo "== stdterraform demo: 3 control + 3 brokers (host) + 1 stdworker + LocalStack (docker) =="
+
+    # 1. Cluster on the host — control + brokers + Postgres, NO host workers
+    #    (NUM_WORKERS=0): the stdworker runs in Docker (it needs tofu + aws + …).
+    NUM_CONTROL=3 NUM_BROKERS=3 NUM_WORKERS=0 \
+      bash "{{root}}/deploy/dev-local.sh" &
+    cluster_pid=$!
+    trap '{{compose}} down -v >/dev/null 2>&1 || true; kill "$cluster_pid" 2>/dev/null || true' EXIT INT TERM
+
+    echo "== waiting for the control API at {{api}} =="
+    for _ in $(seq 1 60); do
+      curl -fsS "{{api}}/livez" >/dev/null 2>&1 && break || sleep 1
+    done
+
+    # 2. Apply the kind + providerconfig BEFORE starting the worker, so its first task
+    #    already sees its config (no boot-vs-config race). The resource is applied LAST
+    #    (step 4) — it just queues until the worker claims it. The CRD ships with the
+    #    provider (internal/providers/stdterraform/stdterraform.kind.json).
+    echo "== applying the stdterraform CRD (from the provider package) =="
+    "{{conctl}}" --server "{{api}}" apply --type manifest -f "{{crd}}"
+    echo "== applying the stdterraform providerconfig (S3 state backend + LocalStack endpoint) =="
+    "{{conctl}}" --server "{{api}}" apply --type providerconfig -f "{{fixtures}}/providerconfig-stdterraform.json"
+
+    # 3. Generate the HCL bundle (.tf → bundle.tar.gz), then bring up LocalStack +
+    #    the worker. LocalStack SELF-SEEDS S3 via its ready.d init hook; --wait
+    #    blocks until its healthcheck passes (bundle uploaded), so by the time we
+    #    apply the resource everything is ready.
+    echo "== generating the HCL bundle (hcl-bundle/*.tf → bundle.tar.gz) =="
+    bash "{{fixtures}}/gen-bundle.sh"
+    echo "== bringing up LocalStack (self-seeding S3) + 1 stdworker (relay covers all 3 tiles) =="
+    {{compose}} up -d --wait localstack
+    {{compose}} up -d tfworker
+
+    # 4. Apply the resource — it queues, the worker claims it, pulls the bundle, and
+    #    runs `tofu apply` against LocalStack.
+    echo "== applying the stdterraform resource (points at s3://tf-bundles/hello.tar.gz) =="
+    "{{conctl}}" --server "{{api}}" apply --type resource -f "{{fixtures}}/resource-stdterraform.json"
+
+    echo
+    echo "== demo applied. Watch it converge in the UI ({{api}}) or:"
+    echo "   {{conctl}} list resources                          # stdterraform/hello-bucket → Ready"
+    echo "   aws --endpoint-url http://localhost:4566 s3 ls      # the created bucket appears in LocalStack"
+    echo "   {{conctl}} delete resource stdterraform/hello-bucket  # runs 'tofu destroy' (teardown), then removes the row"
+    echo "== Ctrl+C to tear down the cluster + LocalStack + workers."
+    wait "$cluster_pid"
+
+# Build the UI + converge/conctl binaries (root build) — enough to run the host-side
+# cluster + conctl. The stdworker linux binary + its image are built by `image` below.
+[doc("build converge + UI + conctl (via the root build)")]
+build:
+    just -f "{{root}}/justfile" build
+
+# Build the SHIPPED stdworker image `converge-stdworker` from the repo-root
+# Dockerfile.stdworker (tofu + aws + gcloud + az + git + curl + jq + the worker binary).
+# The demo does NOT define its own image — it delegates to the root `docker-stdworker`
+# recipe, which cross-builds bin/stdworker.linux-amd64 and `docker build`s the image.
+[doc("build the shipped converge-stdworker image (via the root docker-stdworker recipe)")]
+image:
+    just -f "{{root}}/justfile" docker-stdworker converge-stdworker:latest
+
+# Regenerate the HCL bundle (testfixtures/bundle.tar.gz) from the sample module.
+[doc("regenerate the HCL bundle (testfixtures/bundle.tar.gz) from the sample module")]
+bundle:
+    bash "{{fixtures}}/gen-bundle.sh"
+
+# Tear down the Docker side (LocalStack + workers) if a demo run left it up.
+[doc("tear down the Docker side (LocalStack + workers) if a demo left it up")]
+down:
+    {{compose}} down -v

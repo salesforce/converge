@@ -1,0 +1,14 @@
+{
+  "kind": "account",
+  "kind_version": 1,
+  "name": "sample-account",
+  "labels": {
+    "demo": "classic",
+    "sample": "manual",
+    "kind": "account"
+  },
+  "spec": {
+    "team_name": "platform",
+    "email": "platform-root@example.com"
+  }
+}

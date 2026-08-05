@@ -1,0 +1,14 @@
+# Registers this demo in the Backstage catalog: the golden-path Template (so it appears
+# under "Create") and a Location that points Backstage at the template.yaml here. Add this
+# file's URL to your `catalog.locations` in app-config, or import it via
+# Create → Register Existing Component.
+apiVersion: backstage.io/v1alpha1
+kind: Location
+metadata:
+  name: converge-backstage-demo
+  description: Converge golden-path demo — the "Provision a deployment" template.
+spec:
+  type: url
+  targets:
+    # The golden-path Software Template (relative to this file).
+    - ./template.yaml

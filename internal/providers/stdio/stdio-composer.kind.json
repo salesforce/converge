@@ -1,0 +1,64 @@
+{
+  "kind": "stdio-composer",
+  "kind_version": 1,
+  "max_transient_attempts": 20,
+  "description": "stdio-composer/v1 — GENERIC composer: the stdio provider serving a compose reaction. Per spec change the configured program is run with request.reaction=\"compose\" and its currently-owned children in request.observed; it returns response.children + response.edges (with optional value flows) to fan out a child DAG \u2014 the celbom/stdstarlark capability from ANY language, driven by an external program instead of Go. Same converge stdio protocol + exit-code semantics as the `stdio` leaf kind; children DELETE with the root. Its child kinds must have their own applied CRDs.",
+  "spec_schema": {
+    "type": "object",
+    "additionalProperties": true,
+    "description": "OPAQUE \u2014 forwarded to the program verbatim as request.spec."
+  },
+  "config_schema": {
+    "type": "object",
+    "additionalProperties": true,
+    "description": "Launch settings for the stdio provider (plus an opaque `settings` blob forwarded to the program as request.config).",
+    "properties": {
+      "command": {
+        "type": "string",
+        "description": "Program to run per task (path or PATH name). Falls back to the STDIO_COMMAND env var."
+      },
+      "args": {
+        "type": "array",
+        "items": {
+          "type": "string"
+        },
+        "description": "Fixed leading arguments passed to the command on every task."
+      },
+      "env": {
+        "type": "object",
+        "additionalProperties": {
+          "type": "string"
+        },
+        "description": "Extra environment variables (KEY\u2192VALUE) for the child process."
+      },
+      "settings": {
+        "type": "object",
+        "additionalProperties": true,
+        "description": "Opaque configuration forwarded to the program as request.config."
+      },
+      "timeout_seconds": {
+        "type": "integer",
+        "minimum": 0,
+        "description": "Per-task subprocess timeout in seconds (0 = none; the task deadline still applies)."
+      }
+    }
+  },
+  "status_schema": {
+    "type": "object",
+    "additionalProperties": true,
+    "description": "OPAQUE \u2014 whatever the program writes as response.status."
+  },
+  "reactions": [
+    {
+      "name": "compose",
+      "trigger": "specChange",
+      "emits": [
+        "children",
+        "status",
+        "conditions"
+      ]
+    }
+  ],
+  "resync_interval_secs": 300,
+  "resync_recomposes": true
+}

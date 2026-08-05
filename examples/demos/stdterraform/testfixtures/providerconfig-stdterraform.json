@@ -1,0 +1,16 @@
+{
+  "name": "stdterraform",
+  "kind": "stdterraform",
+  "kind_version": 1,
+  "is_default": true,
+  "spec": {
+    "backend": "s3",
+    "state_prefix": "terraform/",
+    "binary": "tofu",
+    "s3": {
+      "bucket": "tf-state",
+      "region": "us-east-1",
+      "endpoint": "http://localstack:4566"
+    }
+  }
+}

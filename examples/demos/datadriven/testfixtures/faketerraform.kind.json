@@ -1,0 +1,39 @@
+{
+  "kind": "faketerraform",
+  "kind_version": 1,
+  "max_transient_attempts": 20,
+  "description": "faketerraform/v1 — Simulation leaf that fakes 'run a team's Terraform bundle from S3'. Input is spec.tar_url (an s3:// URL to a *.tar of the team's packaged Terraform); on reconcile it pretends to download + `terraform apply` the bundle and writes deterministic fake outputs to status (an apply_id + an image_tag the apply 'built'). The FIRST half of the demo's second DAG: a downstream fakek8sjob depends on this status.image_tag (a composer ValueFlow), so the Job runs the image the apply produced. Teams apply it DECLARATIVELY via a celbom rule or a stdstarlark policy.",
+  "spec_schema": {
+    "type": "object",
+    "additionalProperties": true,
+    "properties": {
+      "tar_url": {
+        "type": "string",
+        "description": "S3 URL to the team's Terraform bundle (*.tar), e.g. s3://team-bundles/base.tar."
+      }
+    }
+  },
+  "status_schema": {
+    "type": "object",
+    "additionalProperties": true,
+    "properties": {
+      "apply_id": {
+        "type": "string",
+        "description": "Deterministic fake `terraform apply` id derived from the bundle."
+      },
+      "image_tag": {
+        "type": "string",
+        "description": "The image the apply 'produced' \u2014 consumed by a downstream fakek8sjob via a ValueFlow."
+      }
+    }
+  },
+  "reactions": [
+    {
+      "name": "work",
+      "trigger": "specChange",
+      "emits": [
+        "status"
+      ]
+    }
+  ]
+}

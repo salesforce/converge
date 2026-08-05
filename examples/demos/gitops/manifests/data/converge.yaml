@@ -1,0 +1,4 @@
+# A SEPARATE ownership scope from web/. Its resources are labeled converge.sh/app=data,
+# so `conctl sync --prune` on this tree manages web and data independently — deleting a
+# file under web/ never touches a data resource, and vice versa (the monorepo case).
+app: data

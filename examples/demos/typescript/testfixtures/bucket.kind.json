@@ -1,0 +1,42 @@
+{
+  "kind": "bucket",
+  "kind_version": 1,
+  "max_transient_attempts": 20,
+  "description": "bucket/v1 — A leaf reconciled by the TypeScript demo worker, composed by tsproject. It depends on an account: its spec.account_id is FILLED BY THE ENGINE from the upstream account's status along the composer's value-flow edge, so the worker just reads the flowed id and derives a bucket name.",
+  "spec_schema": {
+    "type": "object",
+    "additionalProperties": false,
+    "properties": {
+      "account_id": {
+        "type": "string",
+        "description": "The owning account's id. Left absent at compose time — the account→bucket value flow fills it before this leaf runs."
+      }
+    }
+  },
+  "status_schema": {
+    "type": "object",
+    "additionalProperties": false,
+    "properties": {
+      "bucket": {
+        "type": "string",
+        "description": "Provider-issued bucket name (stub: bkt-<account_id>)."
+      },
+      "account_id": {
+        "type": "string",
+        "description": "The account id the bucket belongs to (echoed from the flowed spec)."
+      }
+    },
+    "required": [
+      "bucket"
+    ]
+  },
+  "reactions": [
+    {
+      "name": "work",
+      "trigger": "specChange",
+      "emits": [
+        "status"
+      ]
+    }
+  ]
+}

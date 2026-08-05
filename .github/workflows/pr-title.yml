@@ -1,0 +1,35 @@
+name: pr-title
+
+# Guards the Conventional Commits contract at the gateway. We squash-merge, so the PR
+# TITLE becomes the single commit on main — and release-please derives the SemVer bump
+# from that prefix. A mis-prefixed title (a feature typed as `fix:`) would silently
+# compute the wrong bump AFTER merge; this check catches it BEFORE, on the PR itself.
+on:
+  pull_request:
+    types: [opened, edited, synchronize]
+
+permissions:
+  pull-requests: read
+
+jobs:
+  lint-title:
+    runs-on: salesforce-Ubuntu
+    steps:
+      - uses: amannn/action-semantic-pull-request@v5
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        with:
+          # The `type` vocabulary from CONTRIBUTING.md / CLAUDE.md. Keep in sync with
+          # the release-please changelog sections and the commit-convention docs.
+          types: |
+            feat
+            fix
+            docs
+            refactor
+            test
+            perf
+            build
+            chore
+          # scope is optional and free-form (reactor, broker, sdk, dbq, …); we do not
+          # pin an allowlist so a new area does not need a workflow edit.
+          requireScope: false

@@ -1,0 +1,11 @@
+{
+  "kind": "vpc",
+  "kind_version": 1,
+  "name": "sample-vpc-v1-badconfig",
+  "labels": { "demo": "classic", "sample": "manual", "kind": "vpc", "version": "v1" },
+  "provider_config_ref": "vpc-v2-payments",
+  "spec": {
+    "account_id": "123456789012",
+    "cidr": "10.3.0.0/16"
+  }
+}

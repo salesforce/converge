@@ -1,0 +1,16 @@
+version: v2
+# Go codegen for the INTERNAL broker↔broker mesh contract only. The mesh proto
+# (converge.mesh.v1) generates into internal/meshpb (per its go_package) — core-only, a
+# worker SDK never sees it. The PUBLIC worker contract is generated SEPARATELY by the SDK's
+# own sdk-go/buf.gen.yaml (worker.proto → sdk-go/workerpb), mirroring the TypeScript SDK's
+# sdk-ts/buf.gen.yaml. `just proto` runs both configs, each scoped to its proto by --path.
+# Plugins are NOT installed globally: the recipe builds the pinned protoc-gen-go /
+# protoc-gen-connect-go into a temp dir and puts it on PATH, matching the sqlc/golangci-lint
+# `go run` convention.
+plugins:
+  - local: protoc-gen-go
+    out: .
+    opt: module=github.com/salesforce/converge
+  - local: protoc-gen-connect-go
+    out: .
+    opt: module=github.com/salesforce/converge

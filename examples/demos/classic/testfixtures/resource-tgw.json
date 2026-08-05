@@ -1,0 +1,13 @@
+{
+  "kind": "tgw",
+  "kind_version": 1,
+  "name": "sample-tgw",
+  "labels": {
+    "demo": "classic",
+    "sample": "manual",
+    "kind": "tgw"
+  },
+  "spec": {
+    "name": "platform-transit"
+  }
+}

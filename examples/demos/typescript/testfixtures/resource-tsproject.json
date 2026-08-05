@@ -1,0 +1,15 @@
+{
+  "kind": "tsproject",
+  "kind_version": 1,
+  "name": "demo",
+  "labels": {
+    "demo": "typescript"
+  },
+  "spec": {
+    "project": "demo",
+    "teams": [
+      "platform",
+      "payments"
+    ]
+  }
+}

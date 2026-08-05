@@ -1,0 +1,81 @@
+# GitOps demo: reconcile a whole DIRECTORY of manifests with `conctl sync`, the
+# Argo-CD/Flux-style CD loop. Instead of applying resources one at a time, you point
+# conctl at a manifest tree; it recursively applies every manifest, stamps each
+# resource with the ownership label from the nearest `converge.yaml` (the app scope),
+# and — with --prune — deletes the resources an app owns that the tree no longer
+# declares. Editing/adding/removing a file and re-running `conctl sync` IS the deploy.
+#
+# The tree here (manifests/) has TWO app scopes — web/ and data/ — to show the
+# monorepo case: each is pruned independently, so removing a file under web/ never
+# touches a data resource. The resources are `stdshell` kinds (a small inline script),
+# hosted by the shipped bin/stdworker — this demo ships no worker of its own and needs
+# no external tooling beyond bash.
+#
+# All recipes run from this directory; the repo root is located via git. Requires the
+# same prereqs as the repo root (`just setup`).
+
+set shell := ["bash", "-uc"]
+
+root := `git rev-parse --show-toplevel`
+here := justfile_directory()
+manifests := here / "manifests"
+api := "http://localhost:8080"
+conctl := root / "bin" / "conctl"
+
+# Default: list recipes.
+default:
+    @just --list
+
+# Bring up the cluster + the stdworkers, then GitOps-sync the whole manifests/ tree
+# with `conctl sync --prune`. 3 control + 3 brokers + {{num_workers}} workers.
+[doc("run the cluster + GitOps-sync a manifest tree via `conctl sync` (POSITIONAL: demo [num_workers=3])")]
+demo num_workers="3": build
+    #!/usr/bin/env bash
+    set -euo pipefail
+    echo "== gitops demo: 3 control + 3 brokers + {{num_workers}} stdworkers, driven by 'conctl sync' =="
+
+    # Launch the cluster in the background (shipped stdworker hosts the stdshell kind).
+    NUM_CONTROL=3 NUM_BROKERS=3 NUM_WORKERS={{num_workers}} \
+    WORKER_BIN="{{root}}/bin/stdworker" \
+      bash "{{root}}/deploy/dev-local.sh" &
+    cluster_pid=$!
+    trap 'kill "$cluster_pid" 2>/dev/null || true' EXIT INT TERM
+
+    echo "== waiting for the control API at {{api}} =="
+    for _ in $(seq 1 60); do
+      curl -fsS "{{api}}/livez" >/dev/null 2>&1 && break || sleep 1
+    done
+
+    # THE WHOLE DEMO: one command reconciles the entire tree. conctl sync walks
+    # manifests/ recursively, routes each file by its "type" field (no filename
+    # convention), and applies in dependency order — CRD, providerconfig, then the
+    # resources — stamping each resource with the app label from its nearest
+    # converge.yaml (web/ -> app=web, data/ -> app=data). --prune would delete any
+    # web/data resource dropped from the tree (nothing to prune on a first run).
+    echo "== conctl sync {{manifests}} --prune =="
+    "{{conctl}}" --server "{{api}}" sync "{{manifests}}" --prune
+
+    echo
+    echo "== demo applied via one 'conctl sync'. Watch it converge in the UI ({{api}}) or:"
+    echo "   {{conctl}} list resources --all -l converge.sh/app:web    # web-hello, web-clock"
+    echo "   {{conctl}} list resources --all -l converge.sh/app:data   # data-backup"
+    echo
+    echo "== Try the GitOps loop (edit the tree, re-sync):"
+    echo "   # 1. PRUNE — remove a manifest, re-sync, watch it get deleted:"
+    echo "   rm {{manifests}}/web/resource-clock.json"
+    echo "   {{conctl}} --server {{api}} sync {{manifests}} --prune     # web-clock is pruned"
+    echo
+    echo "   # 2. ADD — drop a new \"type\":\"resource\" file under web/ or data/, re-sync → created"
+    echo "   # 3. DRY-RUN — preview without changing anything:"
+    echo "   {{conctl}} --server {{api}} sync {{manifests}} --prune --dry-run"
+    echo
+    echo "   (In real GitOps you'd 'git pull' the tree on an interval, then 'conctl sync'.)"
+    echo "== Ctrl+C to tear down the cluster + Postgres."
+    wait "$cluster_pid"
+
+# Build the embedded UI + all binaries (incl. the shipped bin/stdworker + bin/conctl)
+# via the ROOT `just build` — the single source of truth. This demo ships NO worker of
+# its own: the stdworker hosts the stdshell kind, and conctl sync drives the apply.
+[doc("build converge + UI + the shipped stdworker + conctl (via the root build)")]
+build:
+    just -f "{{root}}/justfile" build

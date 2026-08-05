@@ -1,0 +1,19 @@
+{
+  "kind": "noop",
+  "kind_version": 1,
+  "max_transient_attempts": 20,
+  "description": "noop/v1 — A no-op resource. Its worker sleeps for the configured NOOP_DELAY and reports success; it calls no external system.",
+  "spec_schema": {
+    "additionalProperties": true,
+    "type": "object"
+  },
+  "reactions": [
+    {
+      "name": "work",
+      "trigger": "specChange",
+      "emits": [
+        "status"
+      ]
+    }
+  ]
+}

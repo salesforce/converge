@@ -1,0 +1,71 @@
+{
+  "name": "celbom",
+  "kind": "celbom",
+  "kind_version": 1,
+  "is_default": true,
+  "spec": {
+    "rules": [
+      {
+        "name": "stack",
+        "when": "team.fd.startsWith(\"fd-\")",
+        "child": {
+          "kind": "fakeapp",
+          "kind_version": 1,
+          "name": "cel-${fd}-${team}-app"
+        },
+        "depends_on": [
+          {
+            "kind": "fakevpc",
+            "kind_version": 1,
+            "name": "cel-${fd}-${team}-vpc",
+            "flow": [
+              {
+                "from": "/vpc_id",
+                "to": "/vpc_id"
+              }
+            ]
+          },
+          {
+            "kind": "fakedb",
+            "kind_version": 1,
+            "name": "cel-${fd}-${team}-db",
+            "flow": [
+              {
+                "from": "/db_endpoint",
+                "to": "/db_endpoint"
+              }
+            ]
+          }
+        ]
+      },
+      {
+        "name": "pipeline",
+        "when": "team.fd.startsWith(\"fd-\")",
+        "child": {
+          "kind": "fakek8sjob",
+          "kind_version": 1,
+          "name": "cel-${fd}-${team}-job",
+          "spec": {
+            "image": "nginx:1.27"
+          }
+        },
+        "depends_on": [
+          {
+            "kind": "faketerraform",
+            "kind_version": 1,
+            "name": "cel-${fd}-${team}-tf",
+            "spec": {
+              "tar_url": "s3://team-bundles/${team}.tar"
+            },
+            "flow": [
+              {
+                "from": "/image_tag",
+                "to": "/built_image"
+              }
+            ]
+          }
+        ]
+      }
+    ]
+  }
+}

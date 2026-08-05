@@ -1,0 +1,149 @@
+-- Engine control-plane queries: resource apply (create-or-update),
+-- force-reconcile.
+
+-- name: UpsertResource :one
+-- Create-or-update a resource keyed by the global (kind, name) unique index
+-- on resource_meta — the single write behind "Apply" (a ResourceManifest).
+-- A new (kind,name) inserts a ROOT (owner_id NULL); an existing one
+-- overwrites that exact row in place WITHOUT reparenting. The body_changed
+-- CTE compares the incoming spec against the pre-image, so generation is
+-- bumped (inline in upd_res) only when spec content changed; an identical
+-- re-apply is a no-op.
+--
+-- INLINE SPEC + VERSION SIDE-LOG: the live spec is written INLINE on
+-- resources.spec (baseline hot path — no second table on reconcile/enqueue).
+-- ADDITIONALLY, when the body changed, we append a copy to spec_versions
+-- (the root rollback/checkout history). Children are composer-managed and
+-- never come through ApplySpec, so spec_versions only ever gets roots.
+--
+-- CTEs:
+--   prev         — pre-image (id, spec, labels), empty if new.
+--   body_changed — true on create, or when the spec content differs.
+--   ins_res      — INSERT the resources row (new id, inline spec) when new.
+--   ins_meta     — INSERT the meta row for the new id.
+--   upd_res      — UPDATE resources.spec inline when prev exists AND changed
+--                  (bump_generation fires on the content change).
+--   upd_meta     — UPDATE meta labels when prev exists.
+--   ins_ver      — append the version to spec_versions when the body changed,
+--                  keyed by the resulting generation (1 on create, else
+--                  prev.generation+1). resource_id is the resolved id.
+-- Run inside a tx by the caller.
+--
+-- Returns the kubectl-style states:
+--   created    — no prior row existed.
+--   changed    — spec or labels actually differed (true on insert).
+--   generation — the resulting generation (1 on create, prev+1 on a real
+--                spec change, prev unchanged otherwise). Returned so the
+--                handler needn't re-read the row (which would decompress a
+--                large spec just to read one int).
+--
+-- FOR UPDATE OF r locks the existing resources row inside prev: two
+-- concurrent applies to the same (kind,name) UPDATE path then serialize —
+-- the second blocks on prev, re-reads generation AFTER the first commits,
+-- so ins_ver derives a fresh generation and can't collide with the first's
+-- spec_versions(resource_id, generation) row (the prior lost-update / PK-500
+-- race). The create path (prev empty, no lock) is serialized by
+-- uniq_resource_meta instead.
+WITH prev AS (
+    SELECT m.id, r.spec, r.generation, r.provider_config_id, m.labels
+    FROM resource_meta m
+    JOIN resources r ON r.id = m.id
+    WHERE m.kind = sqlc.arg(kind) AND m.name = sqlc.arg(name)
+    FOR UPDATE OF r
+), body_changed AS (
+    SELECT (NOT EXISTS (SELECT 1 FROM prev))
+        OR ((SELECT spec FROM prev) IS DISTINCT FROM sqlc.arg(spec)::jsonb) AS v
+), cfg_changed AS (
+    -- The custom-config ref is a config axis, NOT spec: a ref-only change
+    -- must still re-pend the resource (so the new config is cloned into
+    -- work_queue on the next schedule) but must NOT append a spec_versions
+    -- row. So it feeds generation/changed below, but never ins_ver.
+    SELECT (NOT EXISTS (SELECT 1 FROM prev))
+        OR ((SELECT provider_config_id FROM prev) IS DISTINCT FROM sqlc.narg(provider_config_id)::uuid) AS v
+), ins_res AS (
+    -- Stamp kind_version (the web-API version the author is applying against) + the
+    -- (kind, kind_version) manifest_version from kind_config at create (write-cold, one
+    -- PK probe per root apply) so schedule/cascade reads both off the row with no
+    -- join. COALESCE 0 for manifest_version when the (kind, kind_version) has no manifest
+    -- yet (the fence is inert). Changing an EXISTING resource's kind_version is a
+    -- breaking flip handled by FlipResourceKindVersion, NOT this path — a
+    -- same-(kind,name) re-apply here keeps its pinned kind_version.
+    -- kind_version is REQUIRED and explicit (>= 1): NO normalization here — the
+    -- caller (store/API) has already rejected a missing/0 kind_version, so a 0
+    -- reaching this INSERT trips the kind_version >= 1 CHECK (a hard failure, never
+    -- a silent v1).
+    INSERT INTO resources (id, kind, kind_version, owner_id, spec, provider_config_id, manifest_version)
+    SELECT sqlc.arg(id), sqlc.arg(kind), sqlc.arg('kind_version')::int, NULL, sqlc.arg(spec), sqlc.narg(provider_config_id)::uuid,
+           COALESCE((SELECT manifest_version FROM kind_config WHERE kind = sqlc.arg(kind) AND kind_version = sqlc.arg('kind_version')::int), 0)
+    WHERE NOT EXISTS (SELECT 1 FROM prev)
+    RETURNING id
+), ins_meta AS (
+    INSERT INTO resource_meta (id, kind, name, labels)
+    SELECT id, sqlc.arg(kind), sqlc.arg(name), sqlc.arg(labels)
+    FROM ins_res
+    RETURNING id
+), upd_res AS (
+    -- Bump generation explicitly here (gated by body_changed, which already
+    -- did the one spec compare) instead of via a BEFORE-UPDATE trigger that
+    -- would re-do OLD.spec IS DISTINCT FROM NEW.spec on the full body. This
+    -- UPDATE only fires when the body changed, so the bump is unconditional
+    -- within it.
+    UPDATE resources
+       SET spec = sqlc.arg(spec),
+           provider_config_id = sqlc.narg(provider_config_id)::uuid,
+           generation = generation + 1,
+           updated_at = now()
+       -- NOTE: a spec/config edit does NOT clear frozen_until. Quarantine is a
+       -- HARD freeze that only an explicit unquarantine lifts. The new spec +
+       -- bumped generation are persisted (so the row reconciles to the latest
+       -- spec WHEN released), but while frozen_until = 'infinity' the row stays
+       -- frozen — schedule_eligible (called post-commit by ApplySpec) skips it,
+       -- so the edit neither reschedules nor un-freezes it. Same for Resync.
+    WHERE id = (SELECT id FROM prev)
+      AND ((SELECT v FROM body_changed) OR (SELECT v FROM cfg_changed))
+    RETURNING id
+), upd_meta AS (
+    UPDATE resource_meta SET labels = sqlc.arg(labels)
+    WHERE id = (SELECT id FROM prev)
+      AND labels IS DISTINCT FROM sqlc.arg(labels)::jsonb
+    RETURNING id
+), ins_ver AS (
+    INSERT INTO spec_versions (resource_id, generation, spec, source)
+    SELECT COALESCE((SELECT id FROM prev), sqlc.arg(id)),
+           COALESCE((SELECT generation + 1 FROM prev), 1),
+           sqlc.arg(spec), 'apply'
+    WHERE (SELECT v FROM body_changed)
+)
+SELECT
+    COALESCE((SELECT id FROM prev), (SELECT id FROM ins_res))::uuid AS id,
+    (NOT EXISTS (SELECT 1 FROM prev))::boolean AS created,
+    (NOT EXISTS (SELECT 1 FROM prev)
+     OR EXISTS (SELECT 1 FROM upd_res)
+     OR EXISTS (SELECT 1 FROM upd_meta))::boolean AS changed,
+    (CASE
+        WHEN NOT EXISTS (SELECT 1 FROM prev)      THEN 1
+        WHEN (SELECT v FROM body_changed)
+          OR (SELECT v FROM cfg_changed)          THEN (SELECT generation + 1 FROM prev)
+        ELSE (SELECT generation FROM prev)
+     END)::bigint AS generation;
+
+-- name: ReconcileResource :exec
+-- Forces a resource to be reconciled even when its spec hasn't
+-- changed. Bumps generation so synced_gen falls behind, which makes
+-- is_ready compute false and the row gets picked up.
+--
+-- Why bump generation (vs a direct enqueue)? schedule_eligible's
+-- ON CONFLICT is gated on work_queue.generation < EXCLUDED.generation. The
+-- gate's job is idempotency for SAME-generation re-pends (two schedulers
+-- racing to enqueue the same gen → the second is a no-op). A genuine bump
+-- (a new, higher generation) DOES supersede an in-flight lower-gen claim —
+-- by design: the row now has newer desired state, so the stale worker's
+-- result will be capped at its own observed_generation (synced_gen =
+-- GREATEST(...)) and the row stays lagging at the new generation until it
+-- reconciles. The drain's generation-guarded work_queue delete then leaves
+-- the re-pointed row for the next claim. This is at-least-once, not a
+-- two-workers-corrupt-one-task hazard.
+UPDATE resources
+SET generation = generation + 1,
+    updated_at = now()
+WHERE id = $1;
