@@ -1,0 +1,206 @@
+{{- if .Values.stdWorker.enabled }}
+{{- $w := .Values.stdWorker }}
+{{- $sel := dict "ctx" . "component" "stdworker" }}
+# ── Worker pool: dumb clients, the ONLY tier with provider code + identity ─
+# Dials the broker Service, pulls its default config + pure stage tasks, runs them,
+# reports back — DB-less (no DATABASE_URL). Carries the AWS identity (IRSA SA) to
+# chain into target accounts. Shards dynamically for work_queue claims.
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: {{ include "converge.tierFullname" (dict "ctx" . "suffix" "stdworker") }}
+  namespace: {{ .Release.Namespace }}
+  labels:
+    {{- include "converge.tierLabels" $sel | nindent 4 }}
+  {{- with (include "converge.commonAnnotations" .) }}
+  annotations:
+    {{- . | nindent 4 }}
+  {{- end }}
+spec:
+  {{- if not $w.autoscaling.enabled }}
+  replicas: {{ $w.replicaCount }}
+  {{- end }}
+  revisionHistoryLimit: {{ .Values.revisionHistoryLimit }}
+  {{- with $w.strategy }}
+  strategy:
+    {{- toYaml . | nindent 4 }}
+  {{- end }}
+  selector:
+    matchLabels:
+      {{- include "converge.tierSelectorLabels" $sel | nindent 6 }}
+  template:
+    metadata:
+      labels:
+        {{- include "converge.tierSelectorLabels" $sel | nindent 8 }}
+        {{- with (include "converge.podLabels" (dict "ctx" . "tier" $w)) }}{{ . | nindent 8 }}{{- end }}
+      annotations:
+        {{- if $w.doNotDisrupt }}
+        # Block VOLUNTARY node-autoscaler eviction of a worker mid-task. A node
+        # failure / spot reclaim still terminates it (graceful shutdown + reaper cover it).
+        karpenter.sh/do-not-disrupt: "true"
+        cluster-autoscaler.kubernetes.io/safe-to-evict: "false"
+        {{- end }}
+        {{- /* No metrics scrape annotations here: the stdworker binary serves no
+               /metrics endpoint (metrics are a control+broker feature), so annotating
+               it would create a dead scrape target that 404s. */}}
+        {{- with (include "converge.podAnnotations" (dict "ctx" . "tier" $w)) }}{{ . | nindent 8 }}{{- end }}
+    spec:
+      {{- with .Values.imagePullSecrets }}
+      imagePullSecrets:
+        {{- toYaml . | nindent 8 }}
+      {{- end }}
+      # IRSA identity SA (stdworker only). Provisioned out of band and named via
+      # serviceAccount.name; empty → the namespace "default" SA (no AWS identity).
+      # Keeps the projected SA token mounted so IRSA works (unlike control/broker).
+      serviceAccountName: {{ include "converge.stdWorkerServiceAccountName" . }}
+      {{- with .Values.priorityClassName }}
+      priorityClassName: {{ . }}
+      {{- end }}
+      terminationGracePeriodSeconds: {{ $w.terminationGracePeriodSeconds }}
+      securityContext:
+        {{- toYaml .Values.podSecurityContext | nindent 8 }}
+      containers:
+        - name: worker
+          image: {{ include "converge.image" (dict "ctx" . "image" $w.image) }}
+          imagePullPolicy: {{ .Values.image.pullPolicy }}
+          command:
+            {{- toYaml $w.command | nindent 12 }}
+          {{- include "converge.preStop" . | nindent 10 }}
+          securityContext:
+            {{- toYaml .Values.containerSecurityContext | nindent 12 }}
+          env:
+            # AUTO-FOLLOWS server TLS: dials the broker over https:// when tls.enabled,
+            # presenting its OWN client keypair + pinning the CA (converge.tlsWorkerClientEnv).
+            - name: BROKER_ADDR
+              value: "{{ include "converge.scheme" . }}://{{ include "converge.fullname" . }}-broker:{{ .Values.service.broker.port }}"
+            - name: HEALTH_ADDR
+              value: ":8081"
+            - name: WORKER_MAX_PARALLEL
+              value: {{ $w.maxParallel | quote }}
+            - name: WORKER_DRAIN_TIMEOUT
+              value: {{ $w.drainTimeout | quote }}
+            {{- if $w.kinds }}
+            - name: WORKER_KINDS
+              value: {{ $w.kinds | quote }}
+            {{- end }}
+            {{- if $w.scratch.enabled }}
+            - name: TMPDIR
+              value: "/tmp"
+            - name: HOME
+              value: "/tmp"
+            {{- end }}
+            {{- include "converge.tlsWorkerClientEnv" . | nindent 12 }}
+            {{- include "converge.commonEnv" . | nindent 12 }}
+            {{- with $w.extraEnv }}{{ toYaml . | nindent 12 }}{{- end }}
+          {{- include "converge.envFrom" . | nindent 10 }}
+          ports:
+            - name: health
+              containerPort: 8081
+              protocol: TCP
+          {{- /* Worker probes hit the plaintext health listener (:8081) — TLS-independent. */}}
+          {{- include "converge.probes" (dict "probes" $w.probes "port" "health") | nindent 10 }}
+          {{- /*
+          Build the resources block ONCE. When scratch is on, fold an
+          ephemeral-storage request/limit in (so a runaway provider triggers a POD
+          eviction, not node-wide DiskPressure) via a deep-merged copy — never emit
+          requests/limits twice.
+          */}}
+          {{- $res := $w.resources }}
+          {{- if $w.scratch.enabled }}
+          {{- $res = mergeOverwrite (deepCopy $w.resources)
+                (dict "requests" (dict "ephemeral-storage" $w.scratch.ephemeralStorageRequest)
+                      "limits"   (dict "ephemeral-storage" $w.scratch.ephemeralStorageLimit)) }}
+          {{- end }}
+          resources:
+            {{- toYaml $res | nindent 12 }}
+          {{- if or $w.scratch.enabled .Values.tls.enabled }}
+          volumeMounts:
+            {{- if $w.scratch.enabled }}
+            - name: scratch
+              mountPath: /tmp
+            {{- end }}
+            {{- include "converge.workerTLSVolumeMount" . | nindent 12 }}
+          {{- end }}
+      {{- if or $w.scratch.enabled .Values.tls.enabled }}
+      volumes:
+        {{- if $w.scratch.enabled }}
+        - name: scratch
+          emptyDir:
+            sizeLimit: {{ $w.scratch.sizeLimit | quote }}
+        {{- end }}
+        {{- include "converge.workerTLSVolume" . | nindent 8 }}
+      {{- end }}
+      {{- with (or $w.nodeSelector .Values.nodeSelector) }}
+      nodeSelector:
+        {{- toYaml . | nindent 8 }}
+      {{- end }}
+      {{- with (or $w.tolerations .Values.tolerations) }}
+      tolerations:
+        {{- toYaml . | nindent 8 }}
+      {{- end }}
+      {{- with (or $w.affinity .Values.affinity) }}
+      affinity:
+        {{- toYaml . | nindent 8 }}
+      {{- end }}
+      {{- with $w.topologySpreadConstraints }}
+      topologySpreadConstraints:
+        {{- tpl (toYaml .) $ | nindent 8 }}
+      {{- end }}
+{{- if $w.pdb.enabled }}
+---
+apiVersion: policy/v1
+kind: PodDisruptionBudget
+metadata:
+  name: {{ include "converge.tierFullname" (dict "ctx" . "suffix" "stdworker") }}
+  namespace: {{ .Release.Namespace }}
+  labels:
+    {{- include "converge.tierLabels" $sel | nindent 4 }}
+spec:
+  {{- if $w.pdb.maxUnavailable }}
+  maxUnavailable: {{ $w.pdb.maxUnavailable }}
+  {{- else }}
+  minAvailable: {{ $w.pdb.minAvailable }}
+  {{- end }}
+  selector:
+    matchLabels:
+      {{- include "converge.tierSelectorLabels" $sel | nindent 6 }}
+{{- end }}
+{{- if $w.autoscaling.enabled }}
+---
+apiVersion: autoscaling/v2
+kind: HorizontalPodAutoscaler
+metadata:
+  name: {{ include "converge.tierFullname" (dict "ctx" . "suffix" "stdworker") }}
+  namespace: {{ .Release.Namespace }}
+  labels:
+    {{- include "converge.tierLabels" $sel | nindent 4 }}
+spec:
+  scaleTargetRef:
+    apiVersion: apps/v1
+    kind: Deployment
+    name: {{ include "converge.tierFullname" (dict "ctx" . "suffix" "stdworker") }}
+  minReplicas: {{ $w.autoscaling.minReplicas }}
+  maxReplicas: {{ $w.autoscaling.maxReplicas }}
+  metrics:
+    {{- if $w.autoscaling.targetCPUUtilizationPercentage }}
+    - type: Resource
+      resource:
+        name: cpu
+        target:
+          type: Utilization
+          averageUtilization: {{ $w.autoscaling.targetCPUUtilizationPercentage }}
+    {{- end }}
+    {{- if $w.autoscaling.targetMemoryUtilizationPercentage }}
+    - type: Resource
+      resource:
+        name: memory
+        target:
+          type: Utilization
+          averageUtilization: {{ $w.autoscaling.targetMemoryUtilizationPercentage }}
+    {{- end }}
+  {{- with $w.autoscaling.behavior }}
+  behavior:
+    {{- toYaml . | nindent 4 }}
+  {{- end }}
+{{- end }}
+{{- end }}

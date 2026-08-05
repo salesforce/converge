@@ -1,0 +1,15 @@
+{
+  "kind": "stdio-composer",
+  "kind_version": 1,
+  "name": "hello-bom",
+  "spec": {
+    "child_kind": "stdio",
+    "child_kind_version": 1,
+    "name_prefix": "hello",
+    "children": [
+      "alpha",
+      "beta",
+      "gamma"
+    ]
+  }
+}

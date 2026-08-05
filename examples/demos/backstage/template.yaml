@@ -1,0 +1,133 @@
+# Backstage Software Template (Scaffolder) — the GOLDEN PATH a developer runs from
+# Backstage's "Create" page to provision a whole DEPLOYMENT. The developer answers a few
+# platform-level knobs (deployment name, how many functional domains, teams per domain, TGW
+# on/off); the custom `converge:apply` action GENERATES the classicbom BOM spec from those
+# knobs and POSTs it to Converge (POST /api/v1/resources). Converge's composer then fans that
+# one root out into a DAG of accounts + VPCs + transit gateways + routes, wires them with
+# value flows, and rolls up status to the root — the developer watches ONE resource go
+# Ready while dozens of children compose underneath.
+#
+# This is the artifact a PLATFORM ENGINEER owns. The developer never writes a nested BOM,
+# touches conctl, or sees the API — they ask for a deployment and get one. Nothing here is
+# Converge-internal: it drives the same public REST API conctl and the GitOps loop use.
+apiVersion: scaffolder.backstage.io/v1beta3
+kind: Template
+metadata:
+  name: converge-deployment
+  title: Provision a deployment
+  description: |
+    Provision a full deployment on the platform: accounts, VPCs, transit-gateway topology,
+    and routes, composed and reconciled for you from a short request. You choose the shape
+    (domains, teams, connectivity); the platform builds and heals the whole DAG and rolls
+    up its status. Backed by Converge (kind `classicbom`).
+  tags:
+    - converge
+    - golden-path
+    - recommended
+spec:
+  owner: platform-team
+  type: service
+
+  # ── The form: platform-level knobs, NOT a nested BOM. ──
+  parameters:
+    - title: Your deployment
+      required:
+        - name
+        - functional_domains
+        - teams_per_domain
+      properties:
+        name:
+          title: Deployment name
+          type: string
+          description: Lowercase, dashes ok. Prefixes every composed child (accounts, VPCs, …) and names the Converge root + catalog component.
+          pattern: '^[a-z][a-z0-9-]{1,40}[a-z0-9]$'
+          ui:autofocus: true
+        functional_domains:
+          title: Functional domains
+          type: integer
+          description: How many functional domains to carve the deployment into (each gets its own accounts/VPCs, optionally a transit gateway).
+          default: 3
+          minimum: 1
+          maximum: 20
+        teams_per_domain:
+          title: Service teams per domain
+          type: integer
+          description: How many service teams in each functional domain. Each team gets an account + VPC + route (and joins the domain's TGW if enabled).
+          default: 4
+          minimum: 1
+          maximum: 20
+        enable_tgw:
+          title: Enable transit gateway per domain
+          type: boolean
+          description: Attach a transit gateway to each functional domain so its VPCs are interconnected.
+          default: true
+    - title: Ownership
+      required:
+        - owner
+      properties:
+        owner:
+          title: Owner
+          type: string
+          description: The team that owns this deployment (a Backstage group or user).
+          ui:field: OwnerPicker
+          ui:options:
+            catalogFilter:
+              kind: [Group, User]
+
+  # ── The steps that RUN when the developer clicks Create. ──
+  steps:
+    # 1. Scaffold the new component's repo skeleton — a catalog-info.yaml so the deployment
+    #    shows up in the Backstage catalog linked to its live Converge root resource.
+    - id: fetch
+      name: Scaffold catalog entry
+      action: fetch:template
+      input:
+        url: ./skeleton
+        values:
+          name: ${{ parameters.name }}
+          owner: ${{ parameters.owner }}
+          convergeUrl: http://localhost:8080/resources/list/r/classicbom/${{ parameters.name }}
+
+    # 2. THE INTEGRATION: build the BOM from the knobs and apply it to Converge. The
+    #    converge:apply action synthesizes spec.deployment_instance{functional_domains[…]}
+    #    from domains/teams/tgw, then POSTs the classicbom resource. A single POST — the same
+    #    envelope conctl apply and `conctl sync` send.
+    - id: apply
+      name: Provision on Converge
+      action: converge:apply
+      input:
+        kind: classicbom
+        # kind_version is REQUIRED and explicit (no implicit v1) — the API 422s a missing/0.
+        kindVersion: 1
+        name: ${{ parameters.name }}
+        labels:
+          backstage.io/owner: ${{ parameters.owner }}
+        # The action reads these BOM knobs (see converge-apply-action/index.ts) and expands
+        # them into the nested classicbom spec. Passed under `bom` so the action distinguishes
+        # "build a BOM from knobs" from a raw pass-through spec.
+        bom:
+          deployment_name: ${{ parameters.name }}
+          functional_domains: ${{ parameters.functional_domains }}
+          teams_per_domain: ${{ parameters.teams_per_domain }}
+          enable_tgw: ${{ parameters.enable_tgw }}
+
+    # 3. Register the new component in the Backstage catalog, linked to its live root.
+    - id: register
+      name: Register in catalog
+      action: catalog:register
+      input:
+        catalogInfoUrl: ./catalog-info.yaml
+        optional: true
+
+  # ── The "done" screen. ──
+  output:
+    text:
+      - title: Provisioning
+        content: |
+          **${{ parameters.name }}** was applied to Converge (kind `classicbom`). The
+          composer is fanning it into ${{ parameters.functional_domains }} functional
+          domain(s) × ${{ parameters.teams_per_domain }} team(s) of accounts + VPCs +
+          routes now, and will roll status up to the root as they converge.
+    links:
+      - title: Watch it compose + roll up (Converge UI)
+        url: http://localhost:8080/resources/list/r/classicbom/${{ parameters.name }}

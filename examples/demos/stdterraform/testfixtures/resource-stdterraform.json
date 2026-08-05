@@ -1,0 +1,12 @@
+{
+  "kind": "stdterraform",
+  "kind_version": 1,
+  "name": "hello-bucket",
+  "spec": {
+    "source": "s3://tf-bundles/hello.tar.gz",
+    "tf_version": "1.10.6",
+    "vars": {
+      "name": "converge-hello-bucket"
+    }
+  }
+}

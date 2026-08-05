@@ -1,0 +1,113 @@
+name: docs
+
+# Build the Docusaurus documentation site (website/) and publish it to GitHub
+# Pages. Runs on a push to main that touches the site or its source docs, and is
+# manually dispatchable. Nothing built is committed to the repo — the site is
+# rebuilt from source on every deploy and served from the Pages artifact.
+#
+# One-time repo setting: Settings > Pages > Build and deployment > Source =
+# "GitHub Actions" (this workflow is the source; there is no gh-pages branch).
+#
+# Serving URL depends on repo visibility, and the build adapts automatically (see
+# the configure-pages step): while the repo is PRIVATE, Pages serves at a
+# randomized subdomain root (e.g. https://turbo-engine-8gqpr34.pages.github.io/),
+# viewable only by users with repo access; once the repo is PUBLIC it serves at
+# https://salesforce.github.io/converge/. No config change is needed across that
+# flip.
+on:
+  push:
+    branches: [main]
+    # Only rebuild when the site or the markdown it projects actually changes —
+    # a code-only push doesn't need a docs redeploy. Keep this in sync with the
+    # source list in website/scripts/sync-docs.mjs.
+    paths:
+      - 'website/**'
+      - 'docs/**'
+      - 'README.md'
+      - 'cmd/**/README.md'
+      - 'sdk-go/converge/README.md'
+      - 'sdk-ts/README.md'
+      - 'deploy/helm/converge/README.md'
+      - 'examples/demos/**/README.md'
+      - '.github/workflows/docs.yml'
+  # Allow a manual run from the Actions tab (e.g. to redeploy without a push).
+  workflow_dispatch:
+
+# Top-level permissions the BUILD job inherits: repo read, plus pages: write so
+# configure-pages@v5 can read (and, with enablement: true, initialize) the repo's
+# Pages site via the API — without pages access that call fails "Resource not
+# accessible by integration". id-token: write lets the deploy job mint the
+# deployment's OIDC token; the deploy job re-declares the same set in its own block.
+permissions:
+  contents: read
+  pages: write
+  id-token: write
+
+# Only one Pages deployment at a time; don't cancel an in-flight deploy (that can
+# leave Pages in a half-published state) — queue instead.
+concurrency:
+  group: pages
+  cancel-in-progress: false
+
+jobs:
+  build:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      # configure-pages queries the repo's Pages settings via the API and outputs
+      # the EXACT origin + sub-path GitHub will serve the site at. This is the key
+      # to serving correctly in BOTH states without hand-edited config: a PRIVATE
+      # repo is served at a randomized subdomain ROOT
+      # (https://<random>.pages.github.io/, base_path=""), while a PUBLIC repo is
+      # served under the project sub-path (https://salesforce.github.io/converge/,
+      # base_path="/converge"). We feed those outputs into the Docusaurus build
+      # (DOCS_URL/DOCS_BASE_URL), so when the repo flips public the URLs follow
+      # automatically — no config change, no blank-page baseUrl mismatch.
+      - name: configure Pages
+        id: pages
+        uses: actions/configure-pages@v5
+        with:
+          # Enable Pages (Actions source) via the API if it isn't already, so a
+          # first deploy needs no manual toggle and the API read below succeeds.
+          enablement: true
+      # node-version-file reads .nvmrc (node 24), matching the rest of the repo's
+      # workflows. cache: npm reuses the npm download cache keyed on the site's
+      # lockfile so a cold runner doesn't re-download the Docusaurus dep tree.
+      - uses: actions/setup-node@v4
+        with:
+          node-version-file: .nvmrc
+          cache: npm
+          cache-dependency-path: website/package-lock.json
+      # npm ci for a reproducible install from the committed lockfile. The build
+      # runs the `prebuild` hook (npm run sync), which projects the repo's
+      # canonical markdown into website/docs before Docusaurus compiles.
+      - name: install
+        working-directory: website
+        run: npm ci
+      # DOCS_BASE_URL must be a trailing-slashed path; configure-pages emits
+      # base_path WITHOUT a trailing slash ("" for a root site, "/converge" for a
+      # sub-path), so append one — "" -> "/" (root), "/converge" -> "/converge/".
+      - name: build
+        working-directory: website
+        env:
+          DOCS_URL: ${{ steps.pages.outputs.origin }}
+          DOCS_BASE_URL: ${{ steps.pages.outputs.base_path }}/
+        run: npm run build
+      - name: upload Pages artifact
+        uses: actions/upload-pages-artifact@v3
+        with:
+          path: website/build
+
+  deploy:
+    needs: build
+    runs-on: ubuntu-latest
+    permissions:
+      pages: write
+      id-token: write
+    environment:
+      name: github-pages
+      url: ${{ steps.deployment.outputs.page_url }}
+    steps:
+      - name: deploy to GitHub Pages
+        id: deployment
+        uses: actions/deploy-pages@v4

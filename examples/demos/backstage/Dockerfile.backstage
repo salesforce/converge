@@ -1,0 +1,55 @@
+# A real Backstage instance with the Converge `converge:apply` scaffolder action + the
+# "Provision a deployment" golden-path template baked in. Built in stages, self-contained
+# (no host prebuild): the native modules compile INSIDE the image so they match the linux
+# runtime — a host-built app can't be mounted in, because its native bindings
+# (isolated-vm, better-sqlite3) are compiled for the host OS/arch, not linux.
+#
+#   1. scaffold  — `npx @backstage/create-app@0.9.0` produces a fresh Backstage 1.53 monorepo.
+#   2. inject    — drop in the custom action + registration module, wire them into the
+#                  backend + app-config + catalog location + frontend host bind (docker/inject.mjs).
+#   3. install   — corepack-activate yarn 4, install deps from the public npm registry;
+#                  isolated-vm + better-sqlite3 compile here.
+#   4. run       — `yarn start` serves the frontend (:3000) + backend (:7007).
+#
+# NODE VERSION: node:22. isolated-vm@6.1.2 (Backstage's scaffolder sandbox) does NOT compile
+# against node 20's V8 (v8::SourceLocation API mismatch) — it needs node 22+. Verified E2E.
+#
+# The custom action + template come from the build context (this directory), so the shipped
+# demo artifacts ARE what runs. This is a DEMO image running the dev server — heavy and slow
+# to build the first time (a full Backstage install + native compiles), inherent to running
+# a real Backstage.
+
+FROM node:22-bookworm AS backstage
+
+# Backstage's native deps (isolated-vm, better-sqlite3, tree-sitter) need a full C++ toolchain.
+RUN apt-get update && apt-get install -y --no-install-recommends \
+      python3 g++ make build-essential pkg-config ca-certificates && \
+    rm -rf /var/lib/apt/lists/*
+
+# Yarn 4 via corepack (the scaffolded app pins packageManager: yarn@4.x).
+RUN corepack enable
+
+WORKDIR /work
+
+# ── 1. Scaffold a fresh Backstage app. create-app prompts for a name even with --path, so
+#    feed it on stdin. --skip-install; we install after injecting (below). ──
+RUN echo "converge-demo" | npx --yes @backstage/create-app@0.9.0 --path /work/app --skip-install
+WORKDIR /work/app
+
+# ── 2. Inject the Converge action, its registration module, the template + skeleton, and the
+#    wiring script (backend registration + app-config + frontend 0.0.0.0 bind + registry). ──
+COPY converge-apply-action/index.ts packages/backend/src/plugins/scaffolder/convergeApply.ts
+COPY docker/convergeModule.ts       packages/backend/src/plugins/scaffolder/convergeModule.ts
+COPY docker/inject.mjs              docker/inject.mjs
+COPY template.yaml                  converge/template.yaml
+COPY skeleton                       converge/skeleton
+RUN node docker/inject.mjs
+
+# ── 3. Install deps (the slow layer). inject.mjs pinned .yarnrc.yml to the public registry. ──
+RUN yarn install --network-timeout 600000
+
+# ── 4. `backstage-cli repo start` runs the frontend (:3000, bound 0.0.0.0 by inject.mjs) +
+#    the backend (:7007) together. Compose maps both to the host. ──
+ENV NODE_OPTIONS=--no-node-snapshot
+EXPOSE 3000 7007
+CMD ["yarn", "start"]

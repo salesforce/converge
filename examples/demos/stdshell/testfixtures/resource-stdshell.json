@@ -1,0 +1,12 @@
+{
+  "kind": "stdshell",
+  "kind_version": 1,
+  "name": "hello-stdshell",
+  "spec": {
+    "script": "#!/usr/bin/env bash\nset -euo pipefail\necho \"hello from $(hostname) at $(date -u +%Y-%m-%dT%H:%M:%SZ)\"\necho \"greeting is: ${GREETING:-<unset>}\"\n",
+    "env": {
+      "GREETING": "hi"
+    },
+    "timeout_seconds": 60
+  }
+}

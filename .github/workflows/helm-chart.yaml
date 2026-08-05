@@ -1,0 +1,39 @@
+name: helm-chart
+
+# Lint + unit-test the converge Helm chart on any change under deploy/helm/.
+on:
+  pull_request:
+    paths:
+      - "deploy/helm/**"
+      - ".github/workflows/helm-chart.yaml"
+  push:
+    branches: [main]
+    paths:
+      - "deploy/helm/**"
+
+jobs:
+  lint-test:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      - name: Set up Helm
+        uses: azure/setup-helm@v4
+        with:
+          version: v3.16.2
+
+      # helm lint each chart, with values.schema.json enforced, across the ci/ cases.
+      - name: Set up chart-testing
+        uses: helm/chart-testing-action@v2
+
+      - name: ct lint
+        run: ct lint --config deploy/helm/ct.yaml --all
+
+      # Rendered-template unit tests (probe wiring, TLS, PSS, guards).
+      - name: Install helm-unittest
+        run: helm plugin install https://github.com/helm-unittest/helm-unittest
+
+      - name: helm unittest
+        run: helm unittest deploy/helm/converge

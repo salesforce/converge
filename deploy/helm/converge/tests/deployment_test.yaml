@@ -1,0 +1,151 @@
+# helm-unittest suite (https://github.com/helm-unittest/helm-unittest):
+#   helm unittest deploy/helm/converge
+# Asserts the load-bearing, easy-to-regress template invariants — especially the
+# TLS probe wiring (the bug that shipped once) and the tier defaults.
+suite: control + broker + stdworker templates
+templates:
+  - templates/control.yaml
+  - templates/broker.yaml
+  - templates/stdworker.yaml
+set:
+  database.url: postgres://u:p@h:5432/db?sslmode=require
+tests:
+  - it: control API listens plaintext and probes hit the API port when TLS is off
+    template: templates/control.yaml
+    documentIndex: 0
+    asserts:
+      - equal:
+          path: spec.template.spec.containers[0].env[?(@.name=="LISTEN_ADDR")].value
+          value: "http://:8080"
+      - equal:
+          path: spec.template.spec.containers[0].livenessProbe.httpGet.port
+          value: http
+      - equal:
+          path: spec.template.spec.containers[0].readinessProbe.httpGet.port
+          value: http
+      - isNotEmpty:
+          path: spec.template.spec.containers[0].startupProbe
+
+  - it: control probes hit the PLAINTEXT health listener (:8081) under TLS, never the mTLS API port
+    template: templates/control.yaml
+    documentIndex: 0
+    set:
+      tls.enabled: true
+      tls.secretName: cv-tls
+    asserts:
+      - equal:
+          path: spec.template.spec.containers[0].env[?(@.name=="LISTEN_ADDR")].value
+          value: "https://:8080"
+      - equal:
+          path: spec.template.spec.containers[0].env[?(@.name=="HEALTH_ADDR")].value
+          value: ":8081"
+      - equal:
+          path: spec.template.spec.containers[0].livenessProbe.httpGet.port
+          value: health
+      - equal:
+          path: spec.template.spec.containers[0].readinessProbe.httpGet.port
+          value: health
+      # No scheme override — the probe must speak plaintext to the health listener.
+      - notExists:
+          path: spec.template.spec.containers[0].livenessProbe.httpGet.scheme
+
+  - it: control + broker do not mount the default-SA token
+    templates:
+      - templates/control.yaml
+      - templates/broker.yaml
+    documentIndex: 0
+    asserts:
+      - equal:
+          path: spec.template.spec.automountServiceAccountToken
+          value: false
+
+  - it: pods carry the RuntimeDefault seccomp profile (PSS-restricted)
+    template: templates/control.yaml
+    documentIndex: 0
+    asserts:
+      - equal:
+          path: spec.template.spec.securityContext.seccompProfile.type
+          value: RuntimeDefault
+
+  - it: broker serves Connect over https and advertises https to peers under TLS
+    template: templates/broker.yaml
+    documentIndex: 0
+    set:
+      tls.enabled: true
+      tls.secretName: cv-tls
+    asserts:
+      - equal:
+          path: spec.template.spec.containers[0].env[?(@.name=="BROKER_ADDR_LISTEN")].value
+          value: "https://:9090"
+      - matchRegex:
+          path: spec.template.spec.containers[0].env[?(@.name=="RELAY_ADVERTISE_ADDR")].value
+          pattern: "^https://"
+
+  # ── stdworker: the tfenv/tofuenv-under-readOnlyRootFilesystem wiring ──
+  # The image bakes no TF/OpenTofu version; the managers install on demand into a
+  # WRITABLE CONFIG_DIR. That dir is the scratch emptyDir at /tmp (TMPDIR), so this
+  # wiring is load-bearing for stdterraform and easy to regress.
+  - it: stdworker runs the image entrypoint (keeps the tfenv/tofuenv CONFIG_DIR setup)
+    template: templates/stdworker.yaml
+    documentIndex: 0
+    set:
+      stdWorker.enabled: true
+      stdWorker.image.repository: converge-stdworker
+    asserts:
+      - equal:
+          path: spec.template.spec.containers[0].command[0]
+          value: /usr/local/bin/stdworker-entrypoint.sh
+
+  - it: stdworker mounts a writable /tmp scratch emptyDir + TMPDIR when scratch is on
+    template: templates/stdworker.yaml
+    documentIndex: 0
+    set:
+      stdWorker.enabled: true
+      stdWorker.image.repository: converge-stdworker
+    asserts:
+      # A writable TMPDIR is what tfenv/tofuenv install into under readOnlyRootFilesystem.
+      - equal:
+          path: spec.template.spec.containers[0].env[?(@.name=="TMPDIR")].value
+          value: "/tmp"
+      - equal:
+          path: spec.template.spec.containers[0].volumeMounts[?(@.name=="scratch")].mountPath
+          value: /tmp
+      - equal:
+          path: spec.template.spec.volumes[?(@.name=="scratch")].emptyDir.sizeLimit
+          value: "6Gi"
+      # ephemeral-storage request/limit are folded in so a runaway install evicts the POD,
+      # not the node.
+      - equal:
+          path: spec.template.spec.containers[0].resources.limits.ephemeral-storage
+          value: "6Gi"
+      - equal:
+          path: spec.template.spec.containers[0].resources.requests.ephemeral-storage
+          value: "2Gi"
+
+  - it: stdworker keeps readOnlyRootFilesystem (why the scratch mount is required)
+    template: templates/stdworker.yaml
+    documentIndex: 0
+    set:
+      stdWorker.enabled: true
+      stdWorker.image.repository: converge-stdworker
+    asserts:
+      - equal:
+          path: spec.template.spec.containers[0].securityContext.readOnlyRootFilesystem
+          value: true
+
+  - it: disabling scratch leaves no writable /tmp — the entrypoint then fails fast at boot
+    template: templates/stdworker.yaml
+    documentIndex: 0
+    set:
+      stdWorker.enabled: true
+      stdWorker.image.repository: converge-stdworker
+      stdWorker.scratch.enabled: false
+    asserts:
+      # No TMPDIR + no /tmp mount, but readOnlyRootFilesystem stays on → the version
+      # managers would have nowhere writable. The entrypoint's writable-probe catches
+      # this and refuses to start (see stdworker-entrypoint.sh), rather than failing
+      # every stdterraform task later. This test documents that coupling.
+      - notExists:
+          path: spec.template.spec.containers[0].env[?(@.name=="TMPDIR")]
+      - notExists:
+          path: spec.template.spec.volumes[?(@.name=="scratch")]

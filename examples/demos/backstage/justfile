@@ -1,0 +1,78 @@
+# Backstage golden-path demo — FULLY AUTOMATIC, end-to-end, in Docker.
+#
+#   just demo
+#
+# brings up the whole stack with ONE command: Postgres + a Converge control pod + a broker +
+# 3 classic-workers (the classicbom composer + account/vpc/tgw/route providers + statussink
+# reactor) + a one-shot seed of the CRDs/reactor wiring + a REAL Backstage instance with the
+# `converge:apply` custom action and the "Provision a deployment" golden-path template baked
+# in and pre-wired. Then you just open the browser and use it — nothing to wire by hand.
+#
+#   Backstage UI : http://localhost:3000   (Create → "Provision a deployment")
+#   Converge UI  : http://localhost:8080   (watch the composed DAG go Ready)
+#
+# HOW IT FITS TOGETHER (see docker-compose.yml):
+#   - The Converge control/broker/worker images are the repo's own (built by `just images`
+#     here → converge:demo + classic-worker:demo, linux/amd64).
+#   - Backstage is built by Dockerfile.backstage: it scaffolds a real Backstage 1.53 app and
+#     bakes in the custom action + template + wiring, compiling native modules on node:22
+#     inside the image (they don't build on node:20, and a host build can't be mounted into
+#     a linux container). First build is slow (a full Backstage install); it caches after.
+#
+# All recipes run from this directory; the repo root is located via git. Requires Docker +
+# the repo prereqs (`just setup` at the root).
+
+set shell := ["bash", "-uc"]
+
+root := `git rev-parse --show-toplevel`
+here := justfile_directory()
+compose := "docker compose -f " + here / "docker-compose.yml"
+
+# Default: list recipes.
+default:
+    @just --list
+
+# THE demo: build the Converge images, then bring the whole stack up (foreground; compose
+# builds the Backstage image on first run). Ctrl+C tears it down. When Backstage finishes
+# booting (~1 min after its image builds), open http://localhost:3000.
+[doc("one command: build images + up the whole Backstage↔Converge stack, then open http://localhost:3000")]
+demo: images
+    #!/usr/bin/env bash
+    set -euo pipefail
+    echo "== bringing up the full stack (Postgres + Converge control/broker/workers + seed + Backstage) =="
+    echo "== first run builds the Backstage image (several minutes). When everything is up:"
+    echo "==   Backstage UI : http://localhost:3000   →  Create  →  'Provision a deployment'"
+    echo "==   Converge UI  : http://localhost:8080   →  watch the composed DAG converge"
+    echo
+    # NOTE: no --abort-on-container-exit — the migrate + seed services are ONE-SHOT and exit 0
+    # by design; that flag would tear the whole stack down the instant they finish. Plain `up`
+    # keeps the long-lived services (control/broker/workers/backstage) running; the one-shots
+    # exit cleanly and are gated on via depends_on: service_completed_successfully.
+    {{compose}} up --build --remove-orphans
+
+# Build the Converge control/broker + classic-worker images (linux/amd64) the compose stack
+# uses. Cross-compiles the static binaries on the host, then packages them (the repo's own
+# Dockerfiles). The UI is embedded fresh via the root `just build` first.
+[doc("build the converge:demo + classic-worker:demo images the stack runs")]
+images:
+    just -f "{{root}}/justfile" build
+    cd "{{root}}" && CGO_ENABLED=0 GOOS=linux GOARCH=amd64 go build -trimpath -ldflags='-s -w' -o bin/converge.linux-amd64 ./cmd/converge
+    cd "{{root}}" && CGO_ENABLED=0 GOOS=linux GOARCH=amd64 go build -trimpath -ldflags='-s -w' -o bin/conctl.linux-amd64 ./cmd/conctl
+    cd "{{root}}" && CGO_ENABLED=0 GOOS=linux GOARCH=amd64 go build -trimpath -ldflags='-s -w' -o bin/classic-worker.linux-amd64 ./examples/demos/classic/cmd/worker
+    cd "{{root}}" && docker build --platform linux/amd64 -f Dockerfile -t converge:demo .
+    cd "{{root}}" && docker build --platform linux/amd64 -f Dockerfile.classic-worker -t classic-worker:demo .
+
+# Rebuild just the Backstage image (e.g. after editing the action or template).
+[doc("rebuild the Backstage image")]
+rebuild-backstage:
+    {{compose}} build backstage
+
+# Tear the stack down (containers + network). Postgres data is tmpfs, so this is a clean slate.
+[doc("stop + remove the stack")]
+down:
+    {{compose}} down --remove-orphans
+
+# Tail logs from all services (or one: `just logs backstage`).
+[doc("follow stack logs (optionally one service: `just logs backstage`)")]
+logs service="":
+    {{compose}} logs -f {{service}}

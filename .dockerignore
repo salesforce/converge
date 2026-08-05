@@ -1,0 +1,18 @@
+# The Docker build context only needs the prebuilt binaries. Everything else is
+# noise — keep the context tiny so `docker build` stays fast. The big
+# testfixtures/resource-firebom*.json fixtures and logs alone are ~250MB.
+#
+# Every binary the Dockerfile COPYs MUST be un-ignored here, or `docker build`
+# fails with "not found" even though the file exists in bin/ — `*` excludes it
+# from the build context Docker sees.
+*
+# Binaries COPYd by the images built from the repo root. The lean control/broker image
+# (root Dockerfile) uses converge + conctl; the full-tooling worker image
+# (Dockerfile.stdworker) uses stdworker; the classic demo worker
+# (examples/demos/classic/Dockerfile.classicworker) uses its own binary.
+!bin/converge.linux-amd64
+!bin/conctl.linux-amd64
+!bin/stdworker.linux-amd64
+!bin/classic-worker.linux-amd64
+# The stdworker image's entrypoint (Dockerfile.stdworker COPYs it from the repo root).
+!stdworker-entrypoint.sh

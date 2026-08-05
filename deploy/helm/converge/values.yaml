@@ -1,0 +1,564 @@
+# Default values for the converge chart.
+# Every tier (control / broker / stdworker) is a plain Deployment that shards
+# DYNAMICALLY from the cluster_members registry — scale a tier by editing its
+# replicaCount (or enabling its HPA); the cluster re-tiles the 256 shards across
+# whatever pods are live, no rollout math.
+#
+# This chart deploys CONTROL + BROKER by default; the stdworker tier is off by
+# default (see stdWorker.enabled below).
+
+# ── Image ────────────────────────────────────────────────────────────────────
+# This top-level image is the LEAN control + broker image (root Dockerfile): it ships
+# /app/converge + conctl and NO provider code. The worker tier runs a SEPARATE, heavier
+# image with all the provider tooling (Dockerfile.stdworker) — set it via
+# stdWorker.image below. A deployment with its OWN Go providers builds its own worker
+# image + points stdWorker.command at that binary (see stdWorker.image / stdWorker.command).
+image:
+  repository: ghcr.io/salesforce/converge   # the published control/broker image
+  # Track the mutable :latest tag by default — pre-1.0, the project ships a single
+  # rolling image rather than a per-version chart, so an install always gets the
+  # newest published build with nothing to bump. (An empty tag would fall back to
+  # .Chart.AppVersion — use that, or a specific "vX.Y.Z", if you'd rather pin.)
+  tag: "latest"
+  # Optional immutable pin. When set, the image is referenced by repository@digest
+  # (tag ignored) so a re-pushed tag can never cause silent version drift — the way
+  # to get a reproducible deploy while the default tracks :latest. Format:
+  # "sha256:abc123...".
+  digest: ""
+  # Always with a mutable :latest tag: a node that has already cached :latest would
+  # otherwise (IfNotPresent) keep running a STALE image across reschedules/upgrades
+  # even after a newer :latest is published. If you pin a digest or an immutable
+  # version tag instead, IfNotPresent is the more efficient choice.
+  pullPolicy: Always
+imagePullSecrets: []  # e.g. [{ name: my-registry-cred }]
+
+# Override the chart's generated names.
+nameOverride: ""
+fullnameOverride: ""
+
+# ── Database ───────────────────────────────────────────────────────────────
+# Control + broker pods need the Postgres/Aurora WRITER DSN. The worker tier is
+# DB-less (no DATABASE_URL). Provide the DSN one of three ways:
+#   1. database.url            — inline (chart writes a Secret). Convenient, but
+#                                the DSN lands in the release's Secret + Helm history.
+#   2. database.existingSecret — reference a Secret you manage out of band
+#                                (recommended for prod). Set .name + .key.
+# With database.iamAuth: true (Aurora IAM auth) a DSN is STILL required (via url or
+# existingSecret) — only its PASSWORD is ignored and replaced each connection by a
+# short-lived IAM token minted from the pod's IRSA identity. So set url/existingSecret
+# to the host/db/user/sslmode and flip iamAuth on. The DB user must be GRANTed
+# rds_iam; sslmode=require stays mandatory; the pods need an AWS identity.
+database:
+  # Inline writer DSN (used only when existingSecret.name is empty).
+  # Example: postgres://user:pass@writer-endpoint:5432/orchestrator?sslmode=require
+  # NB: an inline DSN lands in the release Secret AND in `helm history` — for prod
+  # prefer existingSecret (a Secret you manage, e.g. via SOPS/helm-secrets/ESO).
+  url: ""
+  # Optional read-replica (Aurora reader) DSN for the API's UI GETs. Empty → the
+  # API reads the primary. Inline; or set readExistingSecret below.
+  readUrl: ""
+  # Reference an externally-managed Secret instead of inlining the DSN.
+  existingSecret:
+    name: ""          # Secret name; empty → chart creates its own from .url
+    key: "database-url"
+  readExistingSecret:
+    name: ""
+    key: "database-read-url"
+  # Aurora IAM auth (DB_IAM_AUTH=true). STILL requires url/existingSecret (only the
+  # password is replaced by a minted token). Needs an AWS identity on the control +
+  # broker pods and the DB user GRANTed rds_iam. NB: those tiers use the namespace
+  # `default` SA, so annotate THAT SA with the role-arn out of band (the chart's
+  # serviceAccount.name is stdworker-only, not the DB-connecting tiers).
+  iamAuth: false
+
+# ── Common defaults applied to every tier (each tier can override) ───────────
+# Non-root distroless: pin the NUMERIC uid/gid (65532 = distroless `nonroot`). The
+# seccompProfile completes Pod Security Standards "restricted" compliance so pods
+# schedule in a namespace with pod-security.kubernetes.io/enforce=restricted, and
+# fsGroup lets the pod read a hardened (mode 0400) cert Secret it mounts.
+podSecurityContext:
+  runAsNonRoot: true
+  runAsUser: 65532
+  runAsGroup: 65532
+  fsGroup: 65532
+  fsGroupChangePolicy: OnRootMismatch
+  seccompProfile:
+    type: RuntimeDefault
+containerSecurityContext:
+  runAsNonRoot: true
+  allowPrivilegeEscalation: false
+  readOnlyRootFilesystem: true
+  seccompProfile:
+    type: RuntimeDefault
+  capabilities:
+    drop: ["ALL"]
+
+# Structured logging for every tier.
+log:
+  level: info      # debug | info | warn | error
+  format: json     # json | text
+
+# preStop sleep (seconds) — lets kube-proxy drop the pod from Service endpoints
+# before SIGTERM so the LB stops routing to a draining pod. Applied to all tiers.
+preStopSleepSeconds: 5
+
+# How many old ReplicaSets each tier's Deployment keeps for rollback. The default
+# k8s value is 10; a frequently-upgraded control plane accumulates clutter, so we
+# trim to 3. Raise if you need deeper `kubectl rollout undo` history.
+revisionHistoryLimit: 3
+
+# Optional PriorityClass NAME for every tier (the chart does NOT create the
+# cluster-scoped PriorityClass — reference one that exists, e.g. the built-in
+# system-cluster-critical for the control plane). Empty → default priority.
+priorityClassName: ""
+
+# Labels / annotations merged onto EVERY object the chart creates (org labeling,
+# cost allocation, etc.). Merged UNDER the chart's own labels (chart labels win on
+# a key clash). Per-tier podLabels/podAnnotations (below) layer on top for pods.
+commonLabels: {}
+commonAnnotations: {}
+
+# Arbitrary extra manifests rendered verbatim with the release (RBAC, an
+# ExternalSecret, a PriorityClass, a cert-manager Certificate, …). List of YAML
+# strings; Tpl is applied so you may use {{ }} referencing chart values.
+extraObjects: []
+  # - |
+  #   apiVersion: v1
+  #   kind: ConfigMap
+  #   metadata:
+  #     name: {{ include "converge.fullname" . }}-extra
+
+# Extra env / envFrom / volumes / volumeMounts merged into EVERY tier (rarely
+# needed; per-tier overrides below are usually the right place). extraEnvFrom is
+# wired into all three tiers' container envFrom.
+extraEnv: []          # [{ name: FOO, value: "bar" }]
+extraEnvFrom: []      # [{ secretRef: { name: extra } }]  or  [{ configMapRef: { name: … } }]
+
+nodeSelector: {}
+tolerations: []
+affinity: {}
+podAnnotations: {}
+podLabels: {}
+
+# ── ServiceAccount (stdworker only) ───────────────────────────────────────
+# The chart runs on ANY conformant Kubernetes (EKS / GKE / AKS / self-managed). It
+# does NOT create, annotate, or label the ServiceAccount — cloud workload identity
+# is an OUT-OF-BAND concern you (or your infra tooling) set up, and the mechanism
+# differs per cloud. Point the stdworker at your pre-created SA by name:
+#   serviceAccount.name = "<your-workload-identity-sa>"  → the stdworker runs as it
+#   serviceAccount.name = "" (default)                   → namespace `default` SA (no identity)
+#
+# Cloud workload-identity cheat-sheet (all done OUT OF BAND on the SA you name here):
+#   • EKS IRSA:          annotate SA  eks.amazonaws.com/role-arn: arn:aws:iam::<acct>:role/<r>
+#                        (+ an IAM role trusting the cluster OIDC provider for this ns:sa).
+#     EKS Pod Identity:  NO SA annotation — create a PodIdentityAssociation (eksctl/EKS API).
+#   • GKE Workload Id.:  annotate SA  iam.gke.io/gcp-service-account: <gsa>@<proj>.iam.gserviceaccount.com
+#                        (+ an IAM policy binding roles/iam.workloadIdentityUser).
+#   • AKS Workload Id.:  annotate SA  azure.workload.identity/client-id: <client-id>
+#                        AND add a POD label azure.workload.identity/use: "true" via
+#                        stdWorker.podLabels (+ a federated credential on the identity).
+# Control + broker run NO provider code and hold NO cloud identity — they use the
+# namespace `default` SA (and disable token automount, see below).
+serviceAccount:
+  name: ""            # a workload-identity SA you created out of band; empty → "default"
+
+# Control + broker make ZERO Kubernetes API calls, so their SA token is pure
+# lateral-movement surface — do not mount it. (The stdworker keeps automount so
+# IRSA's projected token works; override per-tier if your worker needs neither.)
+automountServiceAccountToken: false
+
+# ── TLS / mTLS / SPIFFE (control API :8080 + broker Connect :9090) ───────────────
+# One switch turns on server-side TLS for BOTH the control-plane HTTP API and the
+# broker Connect server (they run the same binary and share the TLS_* env contract the
+# app already honors, with in-place hot-reload of the cert files). The chart does
+# NOT hold key material — like the ServiceAccount, the cert Secret is provisioned
+# OUT OF BAND (cert-manager Certificate, a SPIRE-issued keypair, or a manual
+# Secret). The chart only MOUNTS that Secret read-only and points the app's TLS_*
+# env at it, and flips the listeners to https:// so TLS actually serves.
+#
+# The Secret must carry (standard kubernetes.io/tls layout + a CA entry for mTLS):
+#   tls.crt  — the server certificate (PEM)      → TLS_CERT_FILE
+#   tls.key  — the server private key (PEM)       → TLS_KEY_FILE
+#   ca.crt   — the client CA bundle (PEM), for mTLS → TLS_CLIENT_CA_FILE   (optional)
+#
+# mTLS: present a `ca.crt` (tls.clientCAKey) and the servers REQUIRE + verify a
+# client cert against it. Omit it for one-way (server-only) TLS.
+#
+# SPIFFE: authz allowlists are PER-AUDIENCE — after mTLS chain verification the
+# server additionally requires the client cert's URI-SAN SPIFFE ID to be in the
+# allowlist for the LISTENER it reached. There are three, one per distinct client
+# population, so a worker cert can't reach the API and a peer-broker cert can't pull
+# work: tls.apiSpiffeIDs (API_AUTHZ_SPIFFE_IDS — conctl/UI/CI on control pods),
+# tls.workerSpiffeIDs (WORKER_AUTHZ_SPIFFE_IDS — the workers that pull work),
+# tls.meshSpiffeIDs (MESH_AUTHZ_SPIFFE_IDS — peer brokers on the internal mesh). The
+# broker's worker+mesh services share one listener; its handshake admits the union
+# and a per-service gate narrows each RPC. Enforcement only; certs/SVIDs are still
+# issued out of band (SPIRE, cert-manager). A non-empty list REQUIRES mTLS
+# (clientCAKey set) — the app refuses to boot otherwise. Empty → no SPIFFE authz.
+#
+# When tls.enabled, the built-in stdworker tier AUTO-FOLLOWS: it dials the broker
+# over https://. By default it presents its OWN client cert from stdWorker.tls
+# (a worker-scoped SVID) — do NOT hand the worker the server's private key. If you
+# leave stdWorker.tls unset it falls back to this server Secret for convenience
+# (fine for a demo; give the worker its own client Secret for real mTLS). A
+# separately-deployed provider worker is configured for TLS itself.
+tls:
+  enabled: false
+  # Name of a Secret (created out of band) holding tls.crt / tls.key / (optional) ca.crt.
+  secretName: ""
+  # Where the Secret is mounted read-only in every control/broker pod. The TLS_*
+  # env paths are derived from this.
+  mountPath: /etc/converge/tls
+  # Key WITHIN the Secret holding the client-CA bundle for mTLS. Empty → one-way TLS
+  # (no client-cert requirement). Set (default "ca.crt") to REQUIRE + verify client certs.
+  clientCAKey: ca.crt
+  # Per-audience SPIFFE-ID authz allowlists (each requires mTLS — clientCAKey set).
+  # Empty = no allowlist for that listener (chain trust only). See the note above.
+  # API listener (control pods): conctl / UI / CI.
+  apiSpiffeIDs: []
+    # - spiffe://example.org/ns/converge/sa/conctl
+  # Broker WorkerService: the workers that pull work.
+  workerSpiffeIDs: []
+    # - spiffe://example.org/ns/converge/sa/worker
+  # Broker MeshService: peer brokers on the internal broker↔broker mesh.
+  meshSpiffeIDs: []
+    # - spiffe://example.org/ns/converge/sa/broker
+  # How often the app re-reads the mounted cert files (TLS_RELOAD_INTERVAL) — so a
+  # cert-manager/SPIRE rotation is picked up WITHOUT a pod restart.
+  reloadInterval: 3m
+
+# ── Autoscaling & disruption — READ BEFORE ENABLING HPA ──────────────────────
+# CHURN WARNING (converge-specific): every change to the live pod set re-tiles the
+# 256 shards across the cluster, so an HPA that FLAPS (scale up → down → up on a
+# bursty load) doesn't just churn pods — it churns the shard assignment. Two knobs
+# to control this when you enable autoscaling:
+#   • autoscaling.behavior — the chart leaves this {} (k8s defaults: 300s scale-down
+#     window, immediate scale-up). For a control plane, prefer a LONGER scale-down
+#     stabilization so a transient dip can't scale you down and re-tile. Example:
+#       behavior:
+#         scaleDown: { stabilizationWindowSeconds: 600,
+#                      policies: [{ type: Percent, value: 10, periodSeconds: 60 }] }
+#         scaleUp:   { stabilizationWindowSeconds: 60,
+#                      policies: [{ type: Percent, value: 50, periodSeconds: 60 }] }
+#   • pdb + HPA interaction — the control/broker PDBs use minAvailable: 2 (correct
+#     quorum at the shipped 3 replicas). If you enable HPA and let minReplicas drop
+#     BELOW 3, minAvailable: 2 blocks ALL voluntary eviction once the tier is at 2
+#     pods (node drains stall, then force-kill after grace = churn). In that case
+#     set the tier's minReplicas >= 3, OR switch its pdb to maxUnavailable: 1 (one
+#     eviction at a time regardless of replica count — never deadlocks).
+# Also: HPA CPU utilization is usage/REQUEST, so keep resources.requests.cpu at a
+# real steady-state (done below) or targetCPUUtilizationPercentage is meaningless.
+
+# ── Control plane: sweepers + drainer + reaper + HTTP API ────────────────────
+control:
+  enabled: true
+  replicaCount: 3
+  # Autoscaling (optional). When enabled, replicaCount is ignored. See the CHURN
+  # WARNING above before enabling — set autoscaling.behavior to damp scale-down.
+  autoscaling:
+    enabled: false
+    minReplicas: 3
+    maxReplicas: 6
+    targetCPUUtilizationPercentage: 70
+    targetMemoryUtilizationPercentage: null
+    # HPA scaling-behavior passthrough (scaleUp/scaleDown policies +
+    # stabilizationWindowSeconds). Empty → k8s defaults. See the CHURN WARNING above.
+    behavior: {}
+  # PodDisruptionBudget — keep a quorum of the control plane up. minAvailable: 2
+  # assumes >= 3 replicas; if HPA lets this tier drop below 3, prefer
+  # maxUnavailable: 1 instead (see the CHURN WARNING above).
+  pdb:
+    enabled: true
+    minAvailable: 2
+    maxUnavailable: null
+  # Deployment rollout strategy. maxUnavailable: 0 keeps full quorum during an
+  # upgrade; maxSurge: 1 rolls one extra pod at a time (safe with the sharded,
+  # auto-migrating model — see the README "Upgrades & migrations" section).
+  strategy:
+    type: RollingUpdate
+    rollingUpdate:
+      maxSurge: 1
+      maxUnavailable: 0
+  terminationGracePeriodSeconds: 60
+  shutdownDrain: "45s"
+  # Requests are the SCHEDULER's reservation (steady-state footprint) and the HPA's
+  # 100% baseline; limits are the burst ceiling. Keep them close enough that the
+  # HPA CPU target is meaningful and memory isn't wildly oversubscribed. TUNE to
+  # YOUR load — these are conservative starting points, not measured values.
+  resources:
+    requests:
+      cpu: "1"
+      memory: 1Gi
+    limits:
+      cpu: "4"
+      memory: 4Gi
+  # Per-tier probe tuning. Liveness is DB-free (process up?); readiness pings the DB
+  # (should this pod take traffic?), so its timeout must tolerate DB latency.
+  probes:
+    startup:      { failureThreshold: 30, periodSeconds: 5, timeoutSeconds: 3 }
+    liveness:     { initialDelaySeconds: 10, periodSeconds: 15, timeoutSeconds: 3, failureThreshold: 3 }
+    readiness:    { initialDelaySeconds: 5, periodSeconds: 10, timeoutSeconds: 5, failureThreshold: 3 }
+  # Extra env just for the control tier (e.g. rate-limit / CORS knobs).
+  extraEnv: []
+    # - { name: API_RATE_LIMIT_RPS, value: "100" }
+    # - { name: CORS_ALLOWED_ORIGINS, value: "https://ui.example.com" }
+  nodeSelector: {}
+  tolerations: []
+  affinity: {}
+  # Spread replicas across nodes (and zones if labeled) so a single node loss can't
+  # drop the tier below its PDB minAvailable. ScheduleAnyway = best-effort (won't
+  # block scheduling on a small cluster). Set to [] to disable.
+  topologySpreadConstraints:
+    - maxSkew: 1
+      topologyKey: kubernetes.io/hostname
+      whenUnsatisfiable: ScheduleAnyway
+  podLabels: {}
+  podAnnotations: {}
+
+# ── Broker / gateway: owns shard tiles, claims + fans work over Connect ─────────
+broker:
+  enabled: true
+  replicaCount: 3
+  # See the CHURN WARNING above the control tier before enabling HPA.
+  autoscaling:
+    enabled: false
+    minReplicas: 3
+    maxReplicas: 8
+    targetCPUUtilizationPercentage: 70
+    targetMemoryUtilizationPercentage: null
+    behavior: {}
+  # minAvailable: 2 assumes >= 3 replicas; if HPA lets this tier drop below 3,
+  # prefer maxUnavailable: 1 (see the CHURN WARNING above the control tier).
+  pdb:
+    enabled: true
+    minAvailable: 2
+    maxUnavailable: null
+  strategy:
+    type: RollingUpdate
+    rollingUpdate:
+      maxSurge: 1
+      maxUnavailable: 0
+  terminationGracePeriodSeconds: 60
+  shutdownDrain: "45s"
+  # The broker↔broker MESH advertise address (RELAY_ADVERTISE_ADDR) is ALWAYS
+  # wired by the template from the pod IP + Connect port (POD_IP via the downward
+  # API) — no knob. It lets a broker forward a claimed task to a peer that has a
+  # worker for its kind; without it, work on a tile whose kind has no local worker
+  # STRANDS. Harmless on a single broker (no peers), so it is never disabled.
+  resources:
+    requests:
+      cpu: "1"
+      memory: 512Mi
+    limits:
+      cpu: "4"
+      memory: 4Gi
+  # Broker probes hit the SEPARATE plaintext health listener (:8081), never the
+  # Connect port — so they're TLS-independent. Readiness is tight so a draining broker
+  # leaves Service endpoints fast.
+  probes:
+    startup:      { failureThreshold: 30, periodSeconds: 5, timeoutSeconds: 3 }
+    liveness:     { initialDelaySeconds: 10, periodSeconds: 15, timeoutSeconds: 3, failureThreshold: 3 }
+    readiness:    { initialDelaySeconds: 5, periodSeconds: 2, timeoutSeconds: 3, failureThreshold: 3 }
+  extraEnv: []
+  nodeSelector: {}
+  tolerations: []
+  affinity: {}
+  topologySpreadConstraints:
+    - maxSkew: 1
+      topologyKey: kubernetes.io/hostname
+      whenUnsatisfiable: ScheduleAnyway
+  podLabels: {}
+  podAnnotations: {}
+
+# ── stdworker pool: the SHIPPED default worker (/usr/local/bin/stdworker) — a dumb
+# Connect client, the only tier with provider code. It hosts the built-in std* providers
+# (stdio — an external program per task over the stdio protocol; stdshell — an inline
+# script; stdterraform — a Terraform module apply/destroy).
+#
+# OFF BY DEFAULT. Most deployments ship their OWN provider-worker image (compiled-in
+# Go providers) as a SEPARATE worker Deployment pointed at this release's broker
+# (<release>-broker:9090) — so the control+broker install here comes up without a
+# worker tier. Enable this only when you want the shipped generic stdworker:
+# --set stdWorker.enabled=true and point stdWorker.image at the full-tooling
+# converge-stdworker image (Dockerfile.stdworker). (The name matches the binary —
+# /usr/local/bin/stdworker — to avoid confusion with a custom/demo worker.)
+stdWorker:
+  enabled: false
+  replicaCount: 1
+  # Command to run. The default is the stdworker IMAGE's entrypoint, NOT the bare binary:
+  # the Dockerfile.stdworker entrypoint points tfenv/tofuenv at a WRITABLE CONFIG_DIR (so
+  # the version managers can install-on-demand + write their version file under
+  # containerSecurityContext.readOnlyRootFilesystem) and then exec's the worker. A k8s
+  # `command:` overrides the image ENTRYPOINT, so pointing it straight at the binary would
+  # SKIP that setup and break stdterraform. Bringing your OWN worker binary/image →
+  # override this (and stdWorker.image below).
+  command: ["/usr/local/bin/stdworker-entrypoint.sh"]
+  # The worker image. This tier is the ONLY one that runs provider code, so it needs the
+  # full-tooling stdworker image (built from Dockerfile.stdworker: tfenv/tofuenv + aws/
+  # gcloud/az + git/curl/jq), NOT the lean top-level control/broker image (which ships no
+  # worker binary). Defaults to the published converge-stdworker image; override with your
+  # OWN image if you ship your own Go providers.
+  image:
+    repository: ghcr.io/salesforce/converge-stdworker
+    tag: ""
+    digest: ""
+  autoscaling:
+    enabled: false
+    minReplicas: 1
+    maxReplicas: 50
+    targetCPUUtilizationPercentage: 70
+    targetMemoryUtilizationPercentage: null
+    behavior: {}
+  pdb:
+    enabled: true
+    minAvailable: null
+    maxUnavailable: "10%"
+  strategy: {}   # worker pool tolerates the default 25%/25% rolling update
+  terminationGracePeriodSeconds: 60
+  # Per-pod, per-kind in-flight cap. GLOBAL per-kind cap is kind_config.max_inflight
+  # (tuned live via the API), NOT env.
+  maxParallel: 10
+  # Graceful-drain budget on SIGTERM (below terminationGracePeriodSeconds, at/above
+  # the slowest handler's TaskDeadline so a node move drains real work).
+  drainTimeout: "50s"
+  # Optional: scope this pool to a subset of kinds (comma-separated, WORKER_KINDS).
+  # EMPTY (the default) is valid and means "advertise EVERY kind the bundled
+  # providers declare" — no WORKER_KINDS env is set, so nothing to scope.
+  kinds: ""
+  # Client TLS for dialing a TLS broker (auto-used when the top-level tls.enabled).
+  # Give the worker its OWN client-only Secret (a worker-scoped SVID: tls.crt/tls.key
+  # + the CA in ca.crt) — do NOT reuse the server's private key. Empty secretName →
+  # falls back to the server tls.secretName (demo convenience; not real workload
+  # identity). mountPath is where it's mounted read-only.
+  tls:
+    secretName: ""
+    mountPath: /etc/converge/tls
+  # Writable scratch under readOnlyRootFilesystem for providers that shell out to a
+  # tool needing local temp files. TMPDIR/HOME point here. emptyDir → wiped on restart.
+  # sizeLimit caps it so a runaway provider triggers a POD eviction, not node-wide
+  # DiskPressure; it's paired with an ephemeral-storage request/limit.
+  #
+  # REQUIRED for stdterraform (and anything using tfenv/tofuenv): the image bakes NO
+  # Terraform/OpenTofu version, so the version managers INSTALL the version each module
+  # needs on demand into this dir (their CONFIG_DIR lives here — /opt is read-only under
+  # readOnlyRootFilesystem). Each version is ~85 MB; each task also stages the fetched
+  # module + its provider plugins here (the aws provider alone is 100s of MB), and up to
+  # maxParallel tasks run at once — so size for (installed versions) + (maxParallel ×
+  # per-task working set), not a token temp dir. Defaults below assume a few TF versions +
+  # a handful of concurrent modules; raise for larger modules / higher maxParallel.
+  # The emptyDir is wiped on restart, so the first task per (version) after a restart
+  # re-pays the one-time install (flock-guarded, cached for the pod's life thereafter).
+  #
+  # Disabling this under readOnlyRootFilesystem leaves no writable TMPDIR, which the
+  # entrypoint detects and REFUSES TO START (rather than failing every task) — so if you
+  # turn it off, also give the worker a writable TMPDIR another way (or a writable root FS).
+  scratch:
+    enabled: true
+    sizeLimit: "6Gi"
+    ephemeralStorageRequest: "2Gi"
+    ephemeralStorageLimit: "6Gi"
+  # Block VOLUNTARY node-autoscaler eviction of a worker mid-task (Karpenter +
+  # cluster-autoscaler). Node failure / spot reclaim still terminates it (covered
+  # by the app's graceful shutdown + reaper).
+  doNotDisrupt: true
+  resources:
+    requests:
+      cpu: 500m
+      memory: 512Mi
+    limits:
+      cpu: "4"
+      memory: 4Gi
+  probes:
+    startup:      { failureThreshold: 30, periodSeconds: 5, timeoutSeconds: 3 }
+    liveness:     { initialDelaySeconds: 10, periodSeconds: 15, timeoutSeconds: 3, failureThreshold: 3 }
+    readiness:    { initialDelaySeconds: 5, periodSeconds: 10, timeoutSeconds: 5, failureThreshold: 3 }
+  extraEnv: []
+    # - { name: STDIO_COMMAND, value: "/usr/local/bin/my-tool" }
+  nodeSelector: {}
+  tolerations: []
+  affinity: {}
+  topologySpreadConstraints:
+    - maxSkew: 1
+      topologyKey: kubernetes.io/hostname
+      whenUnsatisfiable: ScheduleAnyway
+  podLabels: {}
+  podAnnotations: {}
+
+# ── Services ──────────────────────────────────────────────────────────────
+service:
+  # API service (control tier), :8080.
+  api:
+    type: ClusterIP
+    port: 8080
+    annotations: {}
+  # Broker Connect service (worker dial target), :9090.
+  broker:
+    type: ClusterIP
+    port: 9090
+    annotations: {}
+
+# ── Metrics / Prometheus ─────────────────────────────────────────────────────
+# OFF BY DEFAULT. metrics.enabled=true turns the app's OpenTelemetry metrics ON
+# (sets OTEL_METRICS_ENABLED on control + broker) and serves them as Prometheus
+# /metrics on the plaintext health listener (:8081) — so scraping never crosses the
+# (m)TLS API/Connect ports (a scraper can't present a client cert; see the chart
+# README "Why /metrics is plaintext"). When enabled the chart also annotates the
+# pods for prometheus.io/scrape and (optionally) renders a ServiceMonitor. Lock the
+# port down with networkPolicy, not TLS on the metrics handler.
+metrics:
+  enabled: false
+  # The scrape port. FIXED at 8081: the app serves /metrics on its plaintext health
+  # listener (HEALTH_ADDR, hardcoded :8081), so this is the port Prometheus must hit.
+  # It's surfaced only so the scrape annotations + ServiceMonitor target the right
+  # port — changing it would point the scraper at a port nothing listens on, so the
+  # chart rejects any other value (see converge.validateMetrics).
+  port: 8081
+  path: /metrics
+  # Legacy prometheus.io/* pod annotations (for a scrape-annotation-based Prometheus).
+  podAnnotations: true
+  serviceMonitor:
+    enabled: false
+    # Namespace to create the ServiceMonitor in (empty → release namespace).
+    namespace: ""
+    interval: 30s
+    scrapeTimeout: 10s
+    # Extra labels so your prometheus-operator's serviceMonitorSelector picks it up.
+    labels: {}
+    relabelings: []
+    metricRelabelings: []
+
+# ── NetworkPolicy (optional) ─────────────────────────────────────────────────
+# OFF BY DEFAULT. When enabled, restricts ingress to each tier's real ports and
+# (optionally) caps egress to DNS + the database. Enable in a namespace with a
+# CNI that enforces NetworkPolicy. The DB egress port defaults to 5432; widen
+# egress.extraTo for sidecars/collectors/etc.
+networkPolicy:
+  enabled: false
+  # Restrict the broker Connect :9090 ingress to pods carrying these labels (workers +
+  # peer brokers). Empty → allow from anywhere in the namespace.
+  brokerClientPodLabels: {}
+    # app.kubernetes.io/name: converge
+  # CIDRs allowed to reach the control API :8080 (e.g. the ingress-controller's).
+  # Empty → allow from anywhere (typical when an Ingress fronts it).
+  apiIngressCIDRs: []
+  egress:
+    # Lock egress down to DNS + the DB (and extraTo). false → no egress rules
+    # (all egress allowed), which is the safe default if you're unsure of the DB IP.
+    restrict: false
+    dnsPorts: [53]
+    dbPort: 5432
+    # Extra egress peers (verbatim NetworkPolicyEgressRule `to`/`ports` entries).
+    extraTo: []
+
+# ── Ingress (optional) — expose the HTTP API outside the cluster ─────────────
+ingress:
+  enabled: false
+  className: ""
+  annotations: {}
+  hosts:
+    - host: converge.example.com
+      paths:
+        - path: /
+          pathType: Prefix
+  tls: []
+    # - { secretName: converge-tls, hosts: [converge.example.com] }

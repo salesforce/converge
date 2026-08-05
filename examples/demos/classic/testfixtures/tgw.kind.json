@@ -1,0 +1,52 @@
+{
+  "kind": "tgw",
+  "kind_version": 1,
+  "max_transient_attempts": 20,
+  "description": "tgw/v1 — A transit gateway hosted in a single account.",
+  "spec_schema": {
+    "additionalProperties": false,
+    "properties": {
+      "name": {
+        "description": "Logical TGW name.",
+        "minLength": 1,
+        "type": "string"
+      }
+    },
+    "required": [
+      "name"
+    ],
+    "type": "object"
+  },
+  "status_schema": {
+    "additionalProperties": false,
+    "properties": {
+      "tgw_id": {
+        "description": "Provider-issued transit gateway id.",
+        "type": "string"
+      }
+    },
+    "required": [
+      "tgw_id"
+    ],
+    "type": "object"
+  },
+  "reactions": [
+    {
+      "name": "work",
+      "trigger": "specChange",
+      "emits": [
+        "status"
+      ]
+    },
+    {
+      "name": "teardown",
+      "trigger": "deleteRequested",
+      "emits": [
+        "finalizer"
+      ],
+      "finalizer": "classic.demo/tgw"
+    }
+  ],
+  "finalizer_name": "classic.demo/tgw",
+  "orphan_grace_secs": 30
+}

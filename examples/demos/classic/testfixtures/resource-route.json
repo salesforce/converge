@@ -1,0 +1,14 @@
+{
+  "kind": "route",
+  "kind_version": 1,
+  "name": "sample-route",
+  "labels": {
+    "demo": "classic",
+    "sample": "manual",
+    "kind": "route"
+  },
+  "spec": {
+    "vpc_id": "vpc-123456789012",
+    "tgw_id": "tgw-platform-transit"
+  }
+}

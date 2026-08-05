@@ -1,0 +1,222 @@
+{{- if .Values.broker.enabled }}
+{{- include "converge.validateTLS" . }}
+{{- include "converge.validateMetrics" . }}
+{{- $b := .Values.broker }}
+{{- $sel := dict "ctx" . "component" "broker" }}
+# ── Broker / gateway: owns work_queue shard tiles, claims + fans out over Connect ─
+# The broker↔broker MESH is always on (a broker pushes a claimed task to a peer
+# that has a worker for its kind). Peers dial THIS broker's pod IP directly, so
+# RELAY_ADVERTISE_ADDR is the pod IP + Connect port (POD_IP from the downward API).
+# NO AWS identity: brokers run no provider code (namespace default SA).
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: {{ include "converge.fullname" . }}-broker
+  namespace: {{ .Release.Namespace }}
+  labels:
+    {{- include "converge.tierLabels" $sel | nindent 4 }}
+  {{- with (include "converge.commonAnnotations" .) }}
+  annotations:
+    {{- . | nindent 4 }}
+  {{- end }}
+spec:
+  {{- if not $b.autoscaling.enabled }}
+  replicas: {{ $b.replicaCount }}
+  {{- end }}
+  revisionHistoryLimit: {{ .Values.revisionHistoryLimit }}
+  {{- with $b.strategy }}
+  strategy:
+    {{- toYaml . | nindent 4 }}
+  {{- end }}
+  selector:
+    matchLabels:
+      {{- include "converge.tierSelectorLabels" $sel | nindent 6 }}
+  template:
+    metadata:
+      labels:
+        {{- include "converge.tierSelectorLabels" $sel | nindent 8 }}
+        {{- with (include "converge.podLabels" (dict "ctx" . "tier" $b)) }}{{ . | nindent 8 }}{{- end }}
+      annotations:
+        checksum/config: {{ include "converge.dbSecretChecksum" . }}
+        {{- with (include "converge.metricsPodAnnotations" .) }}{{ . | nindent 8 }}{{- end }}
+        {{- with (include "converge.podAnnotations" (dict "ctx" . "tier" $b)) }}{{ . | nindent 8 }}{{- end }}
+    spec:
+      {{- with .Values.imagePullSecrets }}
+      imagePullSecrets:
+        {{- toYaml . | nindent 8 }}
+      {{- end }}
+      # Brokers make zero k8s API calls → don't mount the default-SA token.
+      automountServiceAccountToken: {{ .Values.automountServiceAccountToken }}
+      {{- with .Values.priorityClassName }}
+      priorityClassName: {{ . }}
+      {{- end }}
+      terminationGracePeriodSeconds: {{ $b.terminationGracePeriodSeconds }}
+      securityContext:
+        {{- toYaml .Values.podSecurityContext | nindent 8 }}
+      containers:
+        - name: converge
+          image: {{ include "converge.image" (dict "ctx" . "image" dict) }}
+          imagePullPolicy: {{ .Values.image.pullPolicy }}
+          {{- include "converge.preStop" . | nindent 10 }}
+          securityContext:
+            {{- toYaml .Values.containerSecurityContext | nindent 12 }}
+          env:
+            - name: ROLE
+              value: "broker"
+            # The broker Connect server serves TLS when BROKER_ADDR_LISTEN is https://
+            # (mesh Route stays HTTP/2 either way — ALPN h2 on TLS, h2c on plaintext).
+            # Scheme follows tls.enabled; the cert env is wired by converge.tlsServerEnv.
+            - name: BROKER_ADDR_LISTEN
+              value: "{{ include "converge.scheme" . }}://:{{ .Values.service.broker.port }}"
+            # Health probes stay on this SEPARATE plaintext listener (:8081), so a
+            # kubelet probe never has to complete the broker's mTLS handshake.
+            - name: HEALTH_ADDR
+              value: ":8081"
+            - name: SHUTDOWN_DRAIN
+              value: {{ $b.shutdownDrain | quote }}
+            # Broker mesh advertise address — ALWAYS set. A broker that claims a task
+            # for a kind it has no LOCAL worker for forwards it over the mesh to a
+            # peer broker that does; peers reach this broker by dialing the pod IP
+            # here. Without it, work claimed on a tile whose kind has no local worker
+            # STRANDS (the whole point of the mesh). Harmless on a single-broker fleet
+            # (no peers to advertise to), so there is no reason to ever disable it.
+            - name: POD_IP
+              valueFrom:
+                fieldRef:
+                  fieldPath: status.podIP
+            # Peers dial this over the same scheme the broker serves — https:// when
+            # TLS is on, so the mesh presents/verifies the shared keypair like a worker.
+            - name: RELAY_ADVERTISE_ADDR
+              value: "{{ include "converge.scheme" . }}://$(POD_IP):{{ .Values.service.broker.port }}"
+            {{- if .Values.database.iamAuth }}
+            - name: DB_IAM_AUTH
+              value: "true"
+            {{- end }}
+            {{- include "converge.metricsEnv" . | nindent 12 }}
+            {{- include "converge.tlsServerEnv" (dict "root" . "tier" "broker") | nindent 12 }}
+            {{- include "converge.databaseUrlEnv" . | nindent 12 }}
+            {{- include "converge.commonEnv" . | nindent 12 }}
+            {{- with $b.extraEnv }}{{ toYaml . | nindent 12 }}{{- end }}
+          {{- include "converge.envFrom" . | nindent 10 }}
+          ports:
+            - name: connect
+              containerPort: {{ .Values.service.broker.port }}
+              protocol: TCP
+            - name: health
+              containerPort: 8081
+              protocol: TCP
+          {{- /*
+          Probes always hit the SEPARATE plaintext health listener (:8081), never
+          the Connect port — TLS-independent. Broker readiness uses a TIGHT period
+          (broker.probes.readiness.periodSeconds) so on SIGTERM /readyz flips to
+          NotReady and the LB drops the pod FAST, stopping new worker connections.
+          */}}
+          {{- include "converge.probes" (dict "probes" $b.probes "port" "health") | nindent 10 }}
+          resources:
+            {{- toYaml $b.resources | nindent 12 }}
+          {{- with (include "converge.tlsVolumeMount" .) }}
+          volumeMounts:
+            {{- . | nindent 12 }}
+          {{- end }}
+      {{- with (include "converge.tlsVolume" .) }}
+      volumes:
+        {{- . | nindent 8 }}
+      {{- end }}
+      {{- with (or $b.nodeSelector .Values.nodeSelector) }}
+      nodeSelector:
+        {{- toYaml . | nindent 8 }}
+      {{- end }}
+      {{- with (or $b.tolerations .Values.tolerations) }}
+      tolerations:
+        {{- toYaml . | nindent 8 }}
+      {{- end }}
+      {{- with (or $b.affinity .Values.affinity) }}
+      affinity:
+        {{- toYaml . | nindent 8 }}
+      {{- end }}
+      {{- with $b.topologySpreadConstraints }}
+      topologySpreadConstraints:
+        {{- tpl (toYaml .) $ | nindent 8 }}
+      {{- end }}
+---
+# The Connect ClusterIP the workers dial (BROKER_ADDR). Load-balances worker
+# connections across brokers; each owns a disjoint shard tile.
+apiVersion: v1
+kind: Service
+metadata:
+  name: {{ include "converge.fullname" . }}-broker
+  namespace: {{ .Release.Namespace }}
+  labels:
+    {{- include "converge.tierLabels" $sel | nindent 4 }}
+  {{- if or .Values.service.broker.annotations .Values.commonAnnotations }}
+  annotations:
+    {{- with (include "converge.commonAnnotations" .) }}{{ . | nindent 4 }}{{- end }}
+    {{- with .Values.service.broker.annotations }}{{ toYaml . | nindent 4 }}{{- end }}
+  {{- end }}
+spec:
+  type: {{ .Values.service.broker.type }}
+  selector:
+    {{- include "converge.tierSelectorLabels" $sel | nindent 4 }}
+  ports:
+    - name: connect
+      port: {{ .Values.service.broker.port }}
+      targetPort: connect
+      protocol: TCP
+{{- if $b.pdb.enabled }}
+---
+apiVersion: policy/v1
+kind: PodDisruptionBudget
+metadata:
+  name: {{ include "converge.fullname" . }}-broker
+  namespace: {{ .Release.Namespace }}
+  labels:
+    {{- include "converge.tierLabels" $sel | nindent 4 }}
+spec:
+  {{- if $b.pdb.maxUnavailable }}
+  maxUnavailable: {{ $b.pdb.maxUnavailable }}
+  {{- else }}
+  minAvailable: {{ $b.pdb.minAvailable }}
+  {{- end }}
+  selector:
+    matchLabels:
+      {{- include "converge.tierSelectorLabels" $sel | nindent 6 }}
+{{- end }}
+{{- if $b.autoscaling.enabled }}
+---
+apiVersion: autoscaling/v2
+kind: HorizontalPodAutoscaler
+metadata:
+  name: {{ include "converge.fullname" . }}-broker
+  namespace: {{ .Release.Namespace }}
+  labels:
+    {{- include "converge.tierLabels" $sel | nindent 4 }}
+spec:
+  scaleTargetRef:
+    apiVersion: apps/v1
+    kind: Deployment
+    name: {{ include "converge.fullname" . }}-broker
+  minReplicas: {{ $b.autoscaling.minReplicas }}
+  maxReplicas: {{ $b.autoscaling.maxReplicas }}
+  metrics:
+    {{- if $b.autoscaling.targetCPUUtilizationPercentage }}
+    - type: Resource
+      resource:
+        name: cpu
+        target:
+          type: Utilization
+          averageUtilization: {{ $b.autoscaling.targetCPUUtilizationPercentage }}
+    {{- end }}
+    {{- if $b.autoscaling.targetMemoryUtilizationPercentage }}
+    - type: Resource
+      resource:
+        name: memory
+        target:
+          type: Utilization
+          averageUtilization: {{ $b.autoscaling.targetMemoryUtilizationPercentage }}
+    {{- end }}
+  {{- with $b.autoscaling.behavior }}
+  behavior:
+    {{- toYaml . | nindent 4 }}
+  {{- end }}
+{{- end }}
+{{- end }}

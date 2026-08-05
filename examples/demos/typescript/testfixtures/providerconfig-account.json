@@ -1,0 +1,9 @@
+{
+  "name": "account",
+  "kind": "account",
+  "kind_version": 1,
+  "is_default": true,
+  "spec": {
+    "id_pattern": "acc-{team_name}-prod"
+  }
+}

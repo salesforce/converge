@@ -1,0 +1,64 @@
+version: "2"
+
+run:
+  timeout: 3m
+
+linters:
+  enable:
+    - errcheck
+    - govet
+    - staticcheck
+    - unused
+    - ineffassign
+    - gocritic
+    - revive
+    - misspell
+    - unconvert
+    - unparam
+    - sqlclosecheck
+    - noctx
+    - errorlint
+    - exhaustive
+    - prealloc
+
+  exclusions:
+    paths:
+      - internal/dbq
+      - test
+    rules:
+      - path: _test\.go
+        linters:
+          - unparam
+          - prealloc
+          - errcheck
+          - revive
+      - path: cmd/
+        linters:
+          - unparam
+
+  settings:
+    gocritic:
+      enabled-tags:
+        - diagnostic
+        - performance
+      disabled-checks:
+        - appendAssign
+        - rangeValCopy
+        # hugeParam flags large structs passed by value. Many of ours are
+        # cold-path / boot-time (Capabilities, request DTOs, Config) where the
+        # copy is irrelevant and pass-by-value keeps the API simpler — same call
+        # the AWS SDK makes (NewFromConfig(cfg aws.Config)). Disabled rather than
+        # contorting every signature + call site to a pointer.
+        - hugeParam
+    revive:
+      rules:
+        - name: blank-imports
+        - name: unreachable-code
+        - name: unused-parameter
+    exhaustive:
+      default-signifies-exhaustive: true
+    errcheck:
+      exclude-functions:
+        - (*database/sql.DB).Close
+        - (*github.com/jackc/pgx/v5.Tx).Rollback
+        - (github.com/jackc/pgx/v5.Tx).Rollback

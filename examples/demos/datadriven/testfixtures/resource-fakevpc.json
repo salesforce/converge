@@ -1,0 +1,13 @@
+{
+  "kind": "fakevpc",
+  "kind_version": 1,
+  "name": "sample-fakevpc",
+  "labels": {
+    "demo": "datadriven",
+    "sample": "manual",
+    "kind": "fakevpc"
+  },
+  "spec": {
+    "account_id": "platform"
+  }
+}
