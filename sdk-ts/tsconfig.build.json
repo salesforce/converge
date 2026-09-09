@@ -1,0 +1,23 @@
+{
+  // Build config: EMITS the distributable output to dist/ (JS + .d.ts + maps). The base
+  // tsconfig.json stays noEmit for `npm run typecheck`. `npm run build` uses this one.
+  //
+  // rootDir is the package root so the emitted tree preserves the src/ ↔ gen/ sibling
+  // relationship: src imports "../gen/…worker_pb.js", so the output must keep
+  // dist/src/ alongside dist/gen/ for those relative specifiers to resolve. The package
+  // entry points (exports/types in package.json) therefore reference dist/src/index.*.
+  "extends": "./tsconfig.json",
+  "compilerOptions": {
+    "noEmit": false,
+    "rootDir": ".",
+    "outDir": "dist",
+    "declaration": true,
+    "declarationMap": true,
+    "sourceMap": true,
+    "removeComments": false
+  },
+  // Ship only the library sources + the generated proto stubs. The example is not part of
+  // the published package (it's a runnable sample, not API), and there are no tests to strip.
+  "include": ["src/**/*.ts", "gen/**/*.ts"],
+  "exclude": ["example/**/*.ts", "node_modules", "dist"]
+}

@@ -1,0 +1,95 @@
+{
+  "kind": "stdshell",
+  "kind_version": 1,
+  "max_transient_attempts": 20,
+  "description": "stdshell/v1 — Runs a user-supplied script carried INLINE in the resource spec, under a configurable interpreter (bash by default). The worker (bin/stdworker, internal/providers/stdshell) writes spec.script to a temp file, runs `<interpreter> [args\u2026] <script>` with the task's context + timeout, captures stdout/stderr, and records the exit result as status. exit 0 = success; exit 2 = terminal (no retry); any other non-zero = transient (retried up to max_transient_attempts); a ctx timeout/cancel is transient. Defaults (interpreter, baseline env, timeout) come from the kind's providerconfig; a resource spec overrides them.",
+  "spec_schema": {
+    "type": "object",
+    "additionalProperties": false,
+    "properties": {
+      "script": {
+        "type": "string",
+        "description": "The script text to run, inline (executed by the interpreter)."
+      },
+      "interpreter": {
+        "type": "string",
+        "description": "Interpreter to run the script under (path or PATH name). Default: the kind config's default_interpreter, else bash."
+      },
+      "args": {
+        "type": "array",
+        "items": {
+          "type": "string"
+        },
+        "description": "Extra arguments passed to the interpreter before the script path."
+      },
+      "env": {
+        "type": "object",
+        "additionalProperties": {
+          "type": "string"
+        },
+        "description": "Extra environment variables (KEY->VALUE) for the script."
+      },
+      "timeout_seconds": {
+        "type": "integer",
+        "minimum": 0,
+        "description": "Per-run timeout in seconds (0 = the kind config default, then no provider timeout; the task deadline still applies)."
+      }
+    },
+    "required": [
+      "script"
+    ]
+  },
+  "status_schema": {
+    "type": "object",
+    "additionalProperties": false,
+    "properties": {
+      "exit_code": {
+        "type": "integer",
+        "description": "The script's process exit code (0 on success)."
+      },
+      "stdout": {
+        "type": "string",
+        "description": "Captured stdout (tail-bounded)."
+      },
+      "stderr": {
+        "type": "string",
+        "description": "Captured stderr (tail-bounded)."
+      }
+    },
+    "required": [
+      "exit_code"
+    ]
+  },
+  "config_schema": {
+    "type": "object",
+    "additionalProperties": false,
+    "properties": {
+      "default_interpreter": {
+        "type": "string",
+        "description": "Interpreter used when a resource spec sets none (default bash)."
+      },
+      "env": {
+        "type": "object",
+        "additionalProperties": {
+          "type": "string"
+        },
+        "description": "Baseline environment variables (KEY->VALUE) for every script of this kind."
+      },
+      "default_timeout_seconds": {
+        "type": "integer",
+        "minimum": 0,
+        "description": "Per-run timeout used when a resource sets none (0 = none; the task deadline still applies)."
+      }
+    }
+  },
+  "reactions": [
+    {
+      "name": "work",
+      "trigger": "specChange",
+      "emits": [
+        "status",
+        "conditions"
+      ]
+    }
+  ]
+}

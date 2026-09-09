@@ -1,0 +1,11 @@
+{
+  "type": "resource",
+  "kind": "stdshell",
+  "kind_version": 1,
+  "name": "web-hello",
+  "labels": {},
+  "spec": {
+    "script": "#!/usr/bin/env bash\nset -euo pipefail\necho \"hello from the web app\"\n",
+    "timeout_seconds": 60
+  }
+}

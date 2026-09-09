@@ -1,0 +1,67 @@
+syntax = "proto3";
+
+// Package converge.mesh.v1 is the INTERNAL broker↔broker mesh API — NOT part of any
+// worker SDK's contract. It is generated into internal/meshpb, so a worker SDK (in
+// any language) structurally cannot reach it: the only tissue between a worker and a
+// broker is converge.worker.v1 (sdk-go/workerpb). This separation is deliberate — the
+// mesh may evolve freely (new frames, new routing RPCs, a different transport)
+// WITHOUT touching or regenerating the public worker contract that N language SDKs
+// depend on.
+//
+// The dependency is one-way: this proto IMPORTS converge.worker.v1 to REUSE its
+// task/result/interest messages byte-for-byte (a mesh-forwarded task IS a
+// worker.v1.StageTask; a returned result IS a worker.v1.StageComplete), so the
+// forwarded path never re-marshals or re-defines them and the two surfaces can never
+// drift. converge.worker.v1 never references this proto.
+package converge.mesh.v1;
+
+import "converge/worker/v1/worker.proto";
+
+// INTERNAL package (internal/meshpb): only internal/broker imports it; the archtest
+// SDK-boundary guard makes it unreachable from sdk/.
+option go_package = "github.com/salesforce/converge/internal/meshpb;meshpb";
+
+// MeshService is the internal broker↔broker MESH surface: NATS-style push routing
+// that decouples work PLACEMENT from CONSUMPTION so a claimed task reaches a worker
+// connected to a DIFFERENT broker (the fewer-workers-than-brokers case), WITHOUT the
+// worker touching the DB. Only brokers dial it (internal/broker); no worker ever
+// does — it is not part of any worker SDK's Transport.
+service MeshService {
+  // Route is the persistent broker↔broker mesh link (a NATS route). Every broker
+  // holds ONE long-lived bidi Route stream to every peer (the lower member_id
+  // dials, the higher accepts → exactly one stream per pair). Over it each broker
+  // eagerly PUSHES a coarse per-kind worker PRESENCE hint (Interest frames: "I have a
+  // ready worker for (kind, kind_version)") so a claimer knows which peer can run a
+  // kind it lacks a local worker for; and the instant a broker CLAIMS a task it has
+  // no local worker for, it PUSHES the StageTask — a SELF-CONTAINED, durable work
+  // reference carrying its (claim_epoch, generation, manifest_version) fence — down
+  // the route to such a peer. The peer runs it on its local worker and returns the
+  // worker's StageComplete back over the SAME route (the `complete` frame); the
+  // owning broker — which holds the parked stage + the durable write path — does the
+  // fenced result write. The fence is owner-independent (claim_epoch, not identity),
+  // so a stale/late/duplicate return no-ops. The presence hint is best-effort — a
+  // wrong/stale hint just falls back to the claimer re-claiming and re-dispatching;
+  // nothing is lost. A peer/worker/route failure strands nothing: the row's heartbeat
+  // lapses and the reaper reclaims it (bumping the epoch), the unified backstop.
+  rpc Route(stream RouteFrame) returns (stream RouteFrame);
+}
+
+// RouteFrame is one message on the persistent broker↔broker Route bidi stream.
+// The stream is SYMMETRIC — both directions carry RouteFrames — because each broker
+// is both a producer (pushes its claimed tasks) and a consumer (advertises its
+// worker presence) toward the same peer. Exactly one body field is set. The
+// task/interest payloads are the PUBLIC worker.v1 messages, reused by import so a
+// forwarded task is byte-identical to a locally-dispatched one.
+message RouteFrame {
+  oneof body {
+    RouteHello                    hello    = 1; // once on open: the sender's member_id (identity)
+    converge.worker.v1.Interest   interest = 2; // coarse per-kind worker PRESENCE hint (eager, coalesced)
+    converge.worker.v1.StageTask  task     = 3; // a claimed task PUSHED to a peer with a ready worker
+    converge.worker.v1.StageComplete complete = 4; // the peer's worker RESULT for a pushed task, returned to the owner
+  }
+}
+
+// RouteHello is the first frame on a Route stream: the dialer/acceptor exchange
+// their member_id so each side attaches the stream to the right peer record (for
+// presence routing). Sent exactly once per stream open.
+message RouteHello { string member_id = 1; }

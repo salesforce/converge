@@ -1,0 +1,5 @@
+# Derived intermediate: spectool writes this 3.0.3 down-conversion of the
+# OpenAPI golden spec for oapi-codegen to consume (see gen.go / justfile
+# codegen-cli). It is regenerated on every `just codegen-cli`; the committed
+# artifact is client.gen.go, not this.
+openapi.3.0.yaml

@@ -1,0 +1,178 @@
+# Data-driven demo: the THREE "logic as data" composers (celbom CEL rules, stdcel
+# kro-style resource graph, stdstarlark Starlark program) + the dependency/value-flow
+# simulation (fakeapp → fakevpc + fakedb). Run `just demo` to bring up a 3-control +
+# 3-broker converge cluster + 1 worker (this demo's providers), then apply the demo's
+# CRDs + the rule/graph/program config + the BOMs/instances.
+#
+# All recipes run from this directory; paths are relative to the repo root, located
+# via `git rev-parse`. Requires the same prereqs as the repo root (`just setup`).
+
+set shell := ["bash", "-uc"]
+
+root := `git rev-parse --show-toplevel`
+here := justfile_directory()
+# The demo applies its CRDs via conctl from this demo's testfixtures/ (celbom,
+# fakeapp, fakevpc, fakedb, faketerraform, fakek8sjob — the demo-LOCAL kinds).
+# Self-contained; the server does no fixture bootstrap.
+fixtures := here / "testfixtures"
+# stdcel + stdstarlark are SHIPPED built-ins (internal/providers/*), reused here as the
+# generic kro-style / Starlark composers — so their CRDs ship WITH the provider (single
+# source of truth, like stdshell/stdterraform), NOT duplicated into this demo's
+# testfixtures. The demo applies those canonical copies in addition to its *.kind.json glob.
+stdcel_crd := root / "internal" / "providers" / "stdcel" / "stdcel.kind.json"
+stdstarlark_crd := root / "internal" / "providers" / "stdstarlark" / "stdstarlark.kind.json"
+api := "http://localhost:8080"
+# conctl is the kubectl-style CLI (built by the root `just build`) this demo
+# applies/lists objects with; --server points it at the local control API. The
+# fixtures are raw API bodies (no `type` field), so each apply passes --type to
+# name which object it is.
+conctl := root / "bin" / "conctl"
+
+# Default: list recipes.
+default:
+    @just --list
+
+# Bring up the cluster + this demo's worker, then apply the demo: this recipe
+# waits for the API, applies the CRDs (via conctl), then the config + BOMs.
+#   3 control + 3 brokers + 3 data-driven workers (override num_workers on the CLI).
+#
+# num_workers MUST be >= the broker count (3): each broker owns a disjoint shard
+# tile and only dispatches a kind to a CONNECTED worker (the HasSubscriber gate). A
+# worker connects to ONE broker (round-robin j % NUM_BROKERS), so fewer workers
+# than brokers leaves some tiles workerless and their resources strand. 3 covers all.
+[doc("run the cluster + Starlark/CEL/kro-graph composers (POSITIONAL: demo [num_workers=3])")]
+demo num_workers="3": build
+    #!/usr/bin/env bash
+    set -euo pipefail
+    echo "== data-driven demo: 3 control + 3 brokers + {{num_workers}} workers =="
+    echo "   CRDs applied via conctl from: {{fixtures}}"
+    # Launch the cluster in the background via the shared dev-local launcher,
+    # pointing it at THIS demo's worker binary. The launcher brings up
+    # testcontainer Postgres, migrates, and starts the tiers.
+    NUM_CONTROL=3 NUM_BROKERS=3 NUM_WORKERS={{num_workers}} \
+    WORKER_BIN="{{root}}/bin/datadriven-worker" \
+      bash "{{root}}/deploy/dev-local.sh" &
+    cluster_pid=$!
+    trap 'kill "$cluster_pid" 2>/dev/null || true' EXIT INT TERM
+
+    echo "== waiting for the control API at {{api}} =="
+    for _ in $(seq 1 60); do
+      curl -fsS "{{api}}/livez" >/dev/null 2>&1 && break || sleep 1
+    done
+
+    # Apply the CRDs (kind manifests) FIRST: the broker learns claimable kinds
+    # from kind_manifest, and a resource needs its kind's manifest to validate, so
+    # this precedes the config/BOMs below. Apply every demo-LOCAL *.kind.json, then
+    # the SHIPPED stdcel CRD from its provider dir (not duplicated here).
+    echo "== applying CRDs (kind manifests) via conctl =="
+    for _k in {{fixtures}}/*.kind.json "{{stdcel_crd}}" "{{stdstarlark_crd}}"; do
+      [ -e "$_k" ] || continue
+      "{{conctl}}" --server "{{api}}" apply --type manifest -f "$_k"
+    done
+
+    echo "== applying the celbom rule set (the dependency/value-flow demo: app → vpc + db) =="
+    "{{conctl}}" --server "{{api}}" apply --type providerconfig \
+      -f "{{here}}/testfixtures/providerconfig-celbom.json"
+
+    # stdcel demonstrates BOTH config paths side by side:
+    #   - the DEFAULT graph (is_default:true, name "stdcel") — the shared, kro-RGD-style
+    #     template every instance uses unless it overrides. The kro-happy-newton
+    #     instance (no provider_config_ref) composes from it.
+    #   - a CUSTOM graph (is_default:false, name "stdcel-graph") a specific instance
+    #     attaches via provider_config_ref. The kro-eager-lovelace instance references
+    #     it and gets a RICHER graph (app DAG + pipeline DAG) than the default (app DAG
+    #     only). A custom config is CLONED into the work_queue at schedule time (like the
+    #     spec), so it needs no live push-to-workers and dodges the boot-vs-push race.
+    # A referenced config MUST exist before its resource (the API 422s a dangling ref),
+    # which the apply order below guarantees.
+    echo "== applying the stdcel DEFAULT graph (shared template: app DAG) + CUSTOM graph (richer: app + pipeline DAG) =="
+    "{{conctl}}" --server "{{api}}" apply --type providerconfig \
+      -f "{{here}}/testfixtures/providerconfig-stdcel-default.json"
+    "{{conctl}}" --server "{{api}}" apply --type providerconfig \
+      -f "{{here}}/testfixtures/providerconfig-stdcel.json"
+
+    # stdstarlark: the SHIPPED generic Starlark composer runs the BOM fan-out from a
+    # multi-file .star PROGRAM (compose.star + policies/*.star + emit.star, all zipped
+    # into the bundle `data`) via its generic compose(spec, config) contract — full
+    # programmatic control, the escape hatch for logic a CEL rule/graph can't express.
+    echo "== applying the stdstarlark bundle (compose.star + policies/*.star + emit.star → data) =="
+    just apply-bundle "{{here}}/testfixtures/stdstarlark" stdstarlark
+
+    # Brief settle so the stdstarlark bundle PROPAGATES to the workers' live
+    # BundleSource before we apply the resource below. The worker reads the bundle
+    # per task via a LISTEN-driven pull-through cache; applying the resource in the
+    # same instant can let the FIRST compose be claimed before the bundle arrives —
+    # the composer then fails transiently ("no program yet"). A short pause closes
+    # that boot-vs-bundle window (the providerconfig NOTIFY reaches the workers in
+    # well under a second; the failsafe re-push is 60s, so this is belt-and-braces).
+    sleep 3
+
+    echo "== applying the BOMs (celbom + stdstarlark) + both stdcel instances =="
+    "{{conctl}}" --server "{{api}}" apply --type resource \
+      -f "{{here}}/testfixtures/resource-celbom.json" \
+      -f "{{here}}/testfixtures/resource-stdstarlark.json" \
+      -f "{{here}}/testfixtures/resource-stdcel-default.json" \
+      -f "{{here}}/testfixtures/resource-stdcel.json"
+
+    echo
+    echo "== demo applied. Watch it converge in the UI ({{api}}) or:"
+    echo "   {{conctl}} list resources          # the composition roots + child counts"
+    echo "== Ctrl+C to tear down the cluster + Postgres."
+    wait "$cluster_pid"
+
+# The READINESS demo: same cluster, but every worker is launched with
+# FAKEDB_UNHEALTHY=1, so it reports the `fakedb` kind UNREADY (an Interest RS- up the
+# WorkStream — see examples/demos/datadriven/cmd/worker, built on the raw sdk-go/converge
+# client). With NO ready fakedb worker anywhere, the broker's claim gate stops pulling
+# fakedb work off Postgres: fakedb resources PARK in the UI (Reconciling, no worker
+# card) while every OTHER kind — the composers, fakevpc, faketerraform, fakek8sjob —
+# reconciles normally. fakeapp (which consumes fakedb's db_endpoint) stays gated on its
+# missing upstream. Relaunch with plain `just demo` and fakedb flows. This is the
+# "one provider's downstream broke" story a single shared WorkStream can now express
+# per-kind. FAKEDB_UNHEALTHY is exported so the nested `demo` → dev-local.sh → worker
+# inherits it.
+[doc("run the cluster with fakedb advertised UNREADY (per-kind readiness / RS- demo)")]
+demo-unhealthy num_workers="3":
+    #!/usr/bin/env bash
+    set -euo pipefail
+    echo "== readiness demo: launching with FAKEDB_UNHEALTHY=1 — fakedb work will NOT be claimed/pushed =="
+    export FAKEDB_UNHEALTHY=1
+    just -f "{{here}}/justfile" demo {{num_workers}}
+
+# Build the embedded React UI + the converge binary (control/broker) via the
+# ROOT `just build` — the single source of truth for that (it builds the UI
+# first so bin/converge embeds a FRESH ui/dist, restores dist/.gitkeep, and
+# stamps BuildVersion). Then build THIS demo's own worker. Delegating avoids the
+# "stale embedded UI after a code change" trap without duplicating the UI steps.
+[doc("build converge + UI + this demo's datadriven-worker")]
+build:
+    just -f "{{root}}/justfile" build
+    cd "{{root}}" && go build -o bin/datadriven-worker ./examples/demos/datadriven/cmd/worker
+
+# Build a Starlark composer BUNDLE from the .star files and apply it as the given
+# kind's DEFAULT providerconfig. The .star files (a demo testfixtures/ subdir,
+# recursively — compose.star at the root + policies/*.star + emit.star) are the source
+# of truth; this zips them, base64s the zip into the providerconfig `data` column
+# (bytea can't ride raw in JSON), and POSTs — so a program change is a .star edit +
+# re-run, NO converge redeploy.
+#   dir  = the bundle dir (compose.star at root + any other *.star, incl. subdirs)
+#   kind = the providerconfig kind + name
+[doc("zip the Starlark .star files + apply as a kind's default providerconfig")]
+apply-bundle dir=(here / "testfixtures" / "stdstarlark") kind="stdstarlark" port="8080":
+    #!/usr/bin/env bash
+    set -euo pipefail
+    for t in jq zip base64; do command -v "$t" >/dev/null || { echo "$t is required"; exit 1; }; done
+    if [ ! -f "{{dir}}/compose.star" ]; then echo "no compose.star in {{dir}}"; exit 1; fi
+    tmp="$(mktemp -d)"; trap 'rm -rf "$tmp"' EXIT
+    # Deterministic zip: -X strips extra attrs; sort entries for stable bytes. `find`
+    # recurses, so policies/*.star are included with their subdir path preserved.
+    ( cd "{{dir}}" && find . -name '*.star' | sort | zip -X -q "$tmp/bundle.zip" -@ )
+    b64="$(base64 < "$tmp/bundle.zip" | tr -d '\n')"
+    # The .star PROGRAM rides `data` (base64 zip); the spec is empty (this kind's logic
+    # is entirely the program). kind_version is REQUIRED on a providerconfig apply
+    # (no implicit default) and pins the consumer kind's web-API version — v1 here,
+    # matching the kind's manifest.
+    jq -nc --arg k "{{kind}}" --arg d "$b64" \
+      '{name: $k, kind: $k, kind_version: 1, is_default: true, spec: {}, data: $d}' \
+      | "{{conctl}}" --server "http://localhost:{{port}}" apply --type providerconfig -f -
+    echo "  applied bundle for {{kind}} ($(wc -c < "$tmp/bundle.zip" | tr -d ' ') zip bytes)"

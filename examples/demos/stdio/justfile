@@ -1,0 +1,95 @@
+# stdio demo: the `stdio` provider — make ANY external program a converge kind.
+# The shipped bin/stdworker runs a program per task (here the reference bash
+# handler.sh — the canonical implementation of the converge stdio protocol), pipes
+# the task in as JSON on stdin, and reads the outcome as JSON on stdout. `just demo`
+# brings up a 3-control + 3-broker cluster + stdworkers, then applies the two CRDs
+# (stdio leaf + stdio-composer), their providerconfigs, and two resources: a leaf that
+# runs a bash command and a BOM that fans out leaves.
+#
+# The handler needs `bash` + `jq` on the worker's PATH (both are on the host). No
+# Docker — the workers run on the host via the shared dev-local launcher.
+#
+# All recipes run from this directory; the repo root is located via git. Requires
+# the same prereqs as the repo root (`just setup`) plus `jq`.
+
+set shell := ["bash", "-uc"]
+
+root := `git rev-parse --show-toplevel`
+here := justfile_directory()
+fixtures := here / "testfixtures"
+# The kind manifests (CRDs) ship WITH the provider (stdio.kind.json +
+# stdio-composer.kind.json), not in the demo's fixtures — the demo only supplies the
+# providerconfigs (defaults) + sample resources.
+crddir := root / "internal" / "providers" / "stdio"
+api := "http://localhost:8080"
+conctl := root / "bin" / "conctl"
+handler := here / "testfixtures" / "handler.sh"
+
+# Default: list recipes.
+default:
+    @just --list
+
+# Bring up the cluster + the stdworkers, then apply the demo.
+#   3 control + 3 brokers + {{num_workers}} workers (override on the CLI).
+#
+# num_workers should be >= the broker count (3) so every shard tile has a connected
+# worker (a broker only dispatches a kind to a worker on its own tile, unless the
+# broker mesh relays it). 3 covers all three tiles directly.
+#
+# The stdio provider resolves its command from STDIO_COMMAND when the providerconfig
+# sets none, so we export the absolute handler path here and let dev-local.sh pass
+# it through to the worker children (they inherit the launcher's environment). The
+# providerconfigs applied below therefore carry ONLY `timeout`, no command.
+[doc("run the cluster + the stdworker driving handler.sh (POSITIONAL: demo [num_workers=3])")]
+demo num_workers="3": build
+    #!/usr/bin/env bash
+    set -euo pipefail
+    command -v jq >/dev/null || { echo "jq is required on PATH for the handler"; exit 1; }
+    echo "== stdio demo: 3 control + 3 brokers + {{num_workers}} stdworkers =="
+    echo "   handler: {{handler}}"
+
+    # Launch the cluster in the background, pointing dev-local at the shipped stdworker
+    # and exporting STDIO_COMMAND so its stdio provider runs handler.sh.
+    NUM_CONTROL=3 NUM_BROKERS=3 NUM_WORKERS={{num_workers}} \
+    WORKER_BIN="{{root}}/bin/stdworker" \
+    STDIO_COMMAND="{{handler}}" \
+      bash "{{root}}/deploy/dev-local.sh" &
+    cluster_pid=$!
+    trap 'kill "$cluster_pid" 2>/dev/null || true' EXIT INT TERM
+
+    echo "== waiting for the control API at {{api}} =="
+    for _ in $(seq 1 60); do
+      curl -fsS "{{api}}/livez" >/dev/null 2>&1 && break || sleep 1
+    done
+
+    # CRDs FIRST (the broker learns claimable kinds from kind_manifest; a resource
+    # needs its kind's manifest to validate), then the providerconfigs, then the
+    # resources (which queue until a worker claims them).
+    echo "== applying CRDs (stdio leaf + stdio-composer) from the provider package =="
+    for _k in {{crddir}}/*.kind.json; do
+      [ -e "$_k" ] || continue
+      "{{conctl}}" --server "{{api}}" apply --type manifest -f "$_k"
+    done
+
+    echo "== applying the providerconfigs (command comes from STDIO_COMMAND) =="
+    "{{conctl}}" --server "{{api}}" apply --type providerconfig -f "{{fixtures}}/providerconfig-stdio.json"
+    "{{conctl}}" --server "{{api}}" apply --type providerconfig -f "{{fixtures}}/providerconfig-stdio-composer.json"
+
+    echo "== applying the resources: a bash leaf + a BOM that fans out leaves =="
+    "{{conctl}}" --server "{{api}}" apply --type resource \
+      -f "{{fixtures}}/resource-stdio.json" \
+      -f "{{fixtures}}/resource-stdio-composer.json"
+
+    echo
+    echo "== demo applied. Watch it converge in the UI ({{api}}) or:"
+    echo "   {{conctl}} list resources          # hello-agent (leaf) + hello-bom + its 3 children → Ready"
+    echo "== Ctrl+C to tear down the cluster + Postgres."
+    wait "$cluster_pid"
+
+# Build the embedded UI + all binaries (incl. the shipped bin/stdworker) via the
+# ROOT `just build` — the single source of truth. This demo ships NO worker of its
+# own: the stdworker is a first-class binary, and this demo only provides the
+# reference handler.sh + fixtures. Delegating avoids the stale-embedded-UI trap.
+[doc("build converge + UI + the shipped stdworker (via the root build)")]
+build:
+    just -f "{{root}}/justfile" build

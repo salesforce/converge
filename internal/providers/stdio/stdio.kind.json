@@ -1,0 +1,61 @@
+{
+  "kind": "stdio",
+  "kind_version": 1,
+  "max_transient_attempts": 20,
+  "description": "stdio/v1 — GENERIC leaf worker: lets an external program (any language, no converge Go SDK) act as a converge resource. bin/stdworker runs the program configured for the kind (providerconfig.command/args, or the STDIO_COMMAND env var), pipes the task in as one JSON Request on stdin (reaction, spec, config, bundle), and reads one JSON Response on stdout (status, conditions) \u2014 the converge stdio protocol. exit 0 = success, exit 2 = terminal (no retry), other non-zero = transient (retried); stderr is captured. Spec and config are OPAQUE \u2014 the program owns their schema. The classic case is 'run some arbitrary bash and record the result'. See examples/demos/stdio/testfixtures/handler.sh for the canonical stdio-RPC implementation.",
+  "spec_schema": {
+    "type": "object",
+    "additionalProperties": true,
+    "description": "OPAQUE \u2014 forwarded to the program verbatim as request.spec. Shape is whatever the program understands."
+  },
+  "config_schema": {
+    "type": "object",
+    "additionalProperties": true,
+    "description": "Launch settings for the stdio provider (plus an opaque `settings` blob forwarded to the program as request.config).",
+    "properties": {
+      "command": {
+        "type": "string",
+        "description": "Program to run per task (path or PATH name). Falls back to the STDIO_COMMAND env var."
+      },
+      "args": {
+        "type": "array",
+        "items": {
+          "type": "string"
+        },
+        "description": "Fixed leading arguments passed to the command on every task."
+      },
+      "env": {
+        "type": "object",
+        "additionalProperties": {
+          "type": "string"
+        },
+        "description": "Extra environment variables (KEY\u2192VALUE) for the child process."
+      },
+      "settings": {
+        "type": "object",
+        "additionalProperties": true,
+        "description": "Opaque configuration forwarded to the program as request.config."
+      },
+      "timeout_seconds": {
+        "type": "integer",
+        "minimum": 0,
+        "description": "Per-task subprocess timeout in seconds (0 = none; the task deadline still applies)."
+      }
+    }
+  },
+  "status_schema": {
+    "type": "object",
+    "additionalProperties": true,
+    "description": "OPAQUE \u2014 whatever the program writes as response.status."
+  },
+  "reactions": [
+    {
+      "name": "work",
+      "trigger": "specChange",
+      "emits": [
+        "status",
+        "conditions"
+      ]
+    }
+  ]
+}

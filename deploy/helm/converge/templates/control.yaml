@@ -1,0 +1,214 @@
+{{- if .Values.control.enabled }}
+{{- include "converge.validateTLS" . }}
+{{- include "converge.validateMetrics" . }}
+{{- $c := .Values.control }}
+{{- $sel := dict "ctx" . "component" "control" }}
+# ── Control plane: sweepers + drainer + reaper + HTTP API ────────────────────
+# Plain Deployment — control pods are interchangeable peers, sharding dynamically
+# from cluster_members (no ordinal). NO AWS identity: uses the namespace default SA.
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: {{ include "converge.fullname" . }}-control
+  namespace: {{ .Release.Namespace }}
+  labels:
+    {{- include "converge.tierLabels" $sel | nindent 4 }}
+  {{- with (include "converge.commonAnnotations" .) }}
+  annotations:
+    {{- . | nindent 4 }}
+  {{- end }}
+spec:
+  {{- if not $c.autoscaling.enabled }}
+  replicas: {{ $c.replicaCount }}
+  {{- end }}
+  revisionHistoryLimit: {{ .Values.revisionHistoryLimit }}
+  {{- with $c.strategy }}
+  strategy:
+    {{- toYaml . | nindent 4 }}
+  {{- end }}
+  selector:
+    matchLabels:
+      {{- include "converge.tierSelectorLabels" $sel | nindent 6 }}
+  template:
+    metadata:
+      labels:
+        {{- include "converge.tierSelectorLabels" $sel | nindent 8 }}
+        {{- with (include "converge.podLabels" (dict "ctx" . "tier" $c)) }}{{ . | nindent 8 }}{{- end }}
+      annotations:
+        checksum/config: {{ include "converge.dbSecretChecksum" . }}
+        {{- with (include "converge.metricsPodAnnotations" .) }}{{ . | nindent 8 }}{{- end }}
+        {{- with (include "converge.podAnnotations" (dict "ctx" . "tier" $c)) }}{{ . | nindent 8 }}{{- end }}
+    spec:
+      {{- with .Values.imagePullSecrets }}
+      imagePullSecrets:
+        {{- toYaml . | nindent 8 }}
+      {{- end }}
+      # Control makes zero k8s API calls → don't mount the default-SA token.
+      automountServiceAccountToken: {{ .Values.automountServiceAccountToken }}
+      {{- with .Values.priorityClassName }}
+      priorityClassName: {{ . }}
+      {{- end }}
+      terminationGracePeriodSeconds: {{ $c.terminationGracePeriodSeconds }}
+      securityContext:
+        {{- toYaml .Values.podSecurityContext | nindent 8 }}
+      containers:
+        - name: converge
+          image: {{ include "converge.image" (dict "ctx" . "image" dict) }}
+          imagePullPolicy: {{ .Values.image.pullPolicy }}
+          {{- include "converge.preStop" . | nindent 10 }}
+          securityContext:
+            {{- toYaml .Values.containerSecurityContext | nindent 12 }}
+          env:
+            - name: ROLE
+              value: "control"
+            # The API serves TLS when LISTEN_ADDR is https:// (with TLS_CERT_FILE/
+            # TLS_KEY_FILE, wired by converge.tlsServerEnv). Scheme follows tls.enabled.
+            - name: LISTEN_ADDR
+              value: "{{ include "converge.scheme" . }}://:{{ .Values.service.api.port }}"
+            {{- if .Values.tls.enabled }}
+            # Under TLS the API port requires a (m)TLS handshake a kubelet httpGet
+            # probe can't complete, so the app ALSO starts a SEPARATE plaintext probe
+            # listener here — the probes below target it. (Plaintext API: the app
+            # serves probes on the API port itself and does NOT start this listener.)
+            - name: HEALTH_ADDR
+              value: ":8081"
+            {{- end }}
+            - name: SHUTDOWN_DRAIN
+              value: {{ $c.shutdownDrain | quote }}
+            {{- if .Values.database.iamAuth }}
+            - name: DB_IAM_AUTH
+              value: "true"
+            {{- end }}
+            {{- include "converge.metricsEnv" . | nindent 12 }}
+            {{- include "converge.tlsServerEnv" (dict "root" . "tier" "control") | nindent 12 }}
+            {{- include "converge.databaseUrlEnv" . | nindent 12 }}
+            {{- include "converge.databaseReadUrlEnv" . | nindent 12 }}
+            {{- include "converge.commonEnv" . | nindent 12 }}
+            {{- with $c.extraEnv }}{{ toYaml . | nindent 12 }}{{- end }}
+          {{- include "converge.envFrom" . | nindent 10 }}
+          ports:
+            - name: http
+              containerPort: {{ .Values.service.api.port }}
+              protocol: TCP
+            {{- /* The :8081 health/metrics listener runs under TLS (probes) OR when
+                   metrics are on (/metrics scrape) — declare its port in both cases. */}}
+            {{- if or .Values.tls.enabled .Values.metrics.enabled }}
+            - name: health
+              containerPort: 8081
+              protocol: TCP
+            {{- end }}
+          {{- /*
+          Probes always speak PLAINTEXT: on a plaintext API they hit the API port
+          directly (port: http); under TLS they hit the separate plaintext health
+          listener (port: health, :8081) the app starts for exactly this reason —
+          never an (m)TLS handshake the kubelet can't do. Mirrors the broker.
+          */}}
+          {{- $probePort := ternary "health" "http" .Values.tls.enabled }}
+          {{- include "converge.probes" (dict "probes" $c.probes "port" $probePort) | nindent 10 }}
+          resources:
+            {{- toYaml $c.resources | nindent 12 }}
+          {{- with (include "converge.tlsVolumeMount" .) }}
+          volumeMounts:
+            {{- . | nindent 12 }}
+          {{- end }}
+      {{- with (include "converge.tlsVolume" .) }}
+      volumes:
+        {{- . | nindent 8 }}
+      {{- end }}
+      {{- with (or $c.nodeSelector .Values.nodeSelector) }}
+      nodeSelector:
+        {{- toYaml . | nindent 8 }}
+      {{- end }}
+      {{- with (or $c.tolerations .Values.tolerations) }}
+      tolerations:
+        {{- toYaml . | nindent 8 }}
+      {{- end }}
+      {{- with (or $c.affinity .Values.affinity) }}
+      affinity:
+        {{- toYaml . | nindent 8 }}
+      {{- end }}
+      {{- with $c.topologySpreadConstraints }}
+      topologySpreadConstraints:
+        {{- tpl (toYaml .) $ | nindent 8 }}
+      {{- end }}
+---
+# The API ClusterIP — load-balances the HTTP API across the control pods.
+apiVersion: v1
+kind: Service
+metadata:
+  name: {{ include "converge.fullname" . }}
+  namespace: {{ .Release.Namespace }}
+  labels:
+    {{- include "converge.tierLabels" $sel | nindent 4 }}
+  {{- if or .Values.service.api.annotations .Values.commonAnnotations }}
+  annotations:
+    {{- with (include "converge.commonAnnotations" .) }}{{ . | nindent 4 }}{{- end }}
+    {{- with .Values.service.api.annotations }}{{ toYaml . | nindent 4 }}{{- end }}
+  {{- end }}
+spec:
+  type: {{ .Values.service.api.type }}
+  selector:
+    {{- include "converge.tierSelectorLabels" $sel | nindent 4 }}
+  ports:
+    - name: http
+      port: {{ .Values.service.api.port }}
+      targetPort: http
+      protocol: TCP
+{{- if $c.pdb.enabled }}
+---
+apiVersion: policy/v1
+kind: PodDisruptionBudget
+metadata:
+  name: {{ include "converge.fullname" . }}-control
+  namespace: {{ .Release.Namespace }}
+  labels:
+    {{- include "converge.tierLabels" $sel | nindent 4 }}
+spec:
+  {{- if $c.pdb.maxUnavailable }}
+  maxUnavailable: {{ $c.pdb.maxUnavailable }}
+  {{- else }}
+  minAvailable: {{ $c.pdb.minAvailable }}
+  {{- end }}
+  selector:
+    matchLabels:
+      {{- include "converge.tierSelectorLabels" $sel | nindent 6 }}
+{{- end }}
+{{- if $c.autoscaling.enabled }}
+---
+apiVersion: autoscaling/v2
+kind: HorizontalPodAutoscaler
+metadata:
+  name: {{ include "converge.fullname" . }}-control
+  namespace: {{ .Release.Namespace }}
+  labels:
+    {{- include "converge.tierLabels" $sel | nindent 4 }}
+spec:
+  scaleTargetRef:
+    apiVersion: apps/v1
+    kind: Deployment
+    name: {{ include "converge.fullname" . }}-control
+  minReplicas: {{ $c.autoscaling.minReplicas }}
+  maxReplicas: {{ $c.autoscaling.maxReplicas }}
+  metrics:
+    {{- if $c.autoscaling.targetCPUUtilizationPercentage }}
+    - type: Resource
+      resource:
+        name: cpu
+        target:
+          type: Utilization
+          averageUtilization: {{ $c.autoscaling.targetCPUUtilizationPercentage }}
+    {{- end }}
+    {{- if $c.autoscaling.targetMemoryUtilizationPercentage }}
+    - type: Resource
+      resource:
+        name: memory
+        target:
+          type: Utilization
+          averageUtilization: {{ $c.autoscaling.targetMemoryUtilizationPercentage }}
+    {{- end }}
+  {{- with $c.autoscaling.behavior }}
+  behavior:
+    {{- toYaml . | nindent 4 }}
+  {{- end }}
+{{- end }}
+{{- end }}

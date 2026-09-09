@@ -1,0 +1,83 @@
+{
+  "kind": "vpc",
+  "kind_version": 1,
+  "max_transient_attempts": 20,
+  "description": "vpc/v1: a VPC inside a single account. account_id is filled by the framework when the upstream account becomes ready. `tags` is an OPTIONAL field (a non-breaking v1 evolution the publish linter auto-allows — no kind_version bump).",
+  "spec_schema": {
+    "additionalProperties": false,
+    "properties": {
+      "account_id": {
+        "description": "Provider 12-digit account id this VPC lives in.",
+        "maxLength": 12,
+        "minLength": 12,
+        "type": "string"
+      },
+      "cidr": {
+        "description": "VPC CIDR block, e.g. 10.0.0.0/16.",
+        "minLength": 9,
+        "type": "string"
+      },
+      "tags": {
+        "description": "Optional free-form tags (added in a non-breaking v1 evolution).",
+        "type": "object",
+        "additionalProperties": { "type": "string" }
+      }
+    },
+    "required": [
+      "account_id",
+      "cidr"
+    ],
+    "type": "object"
+  },
+  "status_schema": {
+    "additionalProperties": false,
+    "properties": {
+      "vpc_id": {
+        "description": "Provider-issued VPC id.",
+        "type": "string"
+      }
+    },
+    "required": [
+      "vpc_id"
+    ],
+    "type": "object"
+  },
+  "config_schema": {
+    "additionalProperties": false,
+    "description": "vpc/v1 operational config (a provider config document): the default S3 bucket flow logs land in. A per-(kind, kind_version) config — vpc/v1's default is separate from vpc/v2's.",
+    "properties": {
+      "flow_logs_bucket": {
+        "description": "S3 bucket VPC flow logs are written to.",
+        "type": "string"
+      }
+    },
+    "type": "object"
+  },
+  "reactions": [
+    {
+      "name": "work",
+      "trigger": "specChange",
+      "emits": [
+        "status"
+      ]
+    },
+    {
+      "name": "operate:enable_flow_logs",
+      "trigger": "operation",
+      "emits": [
+        "operationOutput"
+      ],
+      "verb": "enable_flow_logs"
+    },
+    {
+      "name": "teardown",
+      "trigger": "deleteRequested",
+      "emits": [
+        "finalizer"
+      ],
+      "finalizer": "classic.demo/vpc"
+    }
+  ],
+  "finalizer_name": "classic.demo/vpc",
+  "orphan_grace_secs": 30
+}

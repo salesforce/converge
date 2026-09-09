@@ -1,0 +1,47 @@
+/**
+ * Global theme overrides. The accent palette mirrors the project's brand blue
+ * (the #2563eb family, matching the logo and the in-app UI) so the site and the
+ * product feel like one thing. Docusaurus derives the darker/lighter shades
+ * from --ifm-color-primary; the explicit stops below are the standard
+ * Infima-generated ramp for that base.
+ */
+
+:root {
+  --ifm-color-primary: #2563eb;
+  --ifm-color-primary-dark: #1d4fd4;
+  --ifm-color-primary-darker: #1c4bc8;
+  --ifm-color-primary-darkest: #173ea5;
+  --ifm-color-primary-light: #3b6ef0;
+  --ifm-color-primary-lighter: #4b79f1;
+  --ifm-color-primary-lightest: #e6edfd;
+  --ifm-code-font-size: 95%;
+  --docusaurus-highlighted-code-line-bg: rgba(0, 0, 0, 0.08);
+}
+
+/* Dark mode: brighten the accent so it stays legible on the dark surface, and
+   tune the highlighted-code-line background for contrast. */
+[data-theme='dark'] {
+  --ifm-color-primary: #6d9bff;
+  --ifm-color-primary-dark: #4b82ff;
+  --ifm-color-primary-darker: #3a76ff;
+  --ifm-color-primary-darkest: #0a54ff;
+  --ifm-color-primary-light: #8fb4ff;
+  --ifm-color-primary-lighter: #a0c0ff;
+  --ifm-color-primary-lightest: #d3e0ff;
+  --docusaurus-highlighted-code-line-bg: rgba(0, 0, 0, 0.3);
+}
+
+/* Give long doc pages a comfortable measure — the architecture doc is dense. */
+.markdown img {
+  border-radius: 10px;
+}
+
+/* The Introduction page's centered logo. In the README it's a raw <img width=180>
+   (which GitHub sizes), but sync-docs.mjs converts it to a markdown image for the
+   site so Docusaurus baseUrl-prefixes it — markdown images ignore width attrs, so
+   constrain it here by its alt text. The surrounding <div align="center"> centers it. */
+.markdown img[alt='Converge logo'] {
+  width: 180px;
+  height: auto;
+  border-radius: 0;
+}

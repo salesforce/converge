@@ -1,0 +1,19 @@
+# Backstage config fragment for the Converge golden-path demo. Merge these blocks into your
+# instance's app-config.yaml (or app-config.local.yaml).
+#
+# The demo cluster's control API listens on http://localhost:8080 (the launcher default).
+
+# Where the `converge:apply` custom action POSTs resources. Read by the action via
+# config.getOptionalString('converge.baseUrl').
+converge:
+  baseUrl: http://localhost:8080
+
+catalog:
+  locations:
+    # Register the golden-path template so it shows up under Backstage's "Create" page.
+    # Adjust the path to wherever this repo is checked out relative to your Backstage app,
+    # or use an absolute file:/ URL / a git URL if the demo lives in its own repo.
+    - type: file
+      target: ../converge/examples/demos/backstage/catalog-info.yaml
+      rules:
+        - allow: [Location, Template]

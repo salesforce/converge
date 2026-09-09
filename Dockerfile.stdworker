@@ -1,0 +1,99 @@
+# Dockerfile.stdworker — the DEFAULT converge worker (cmd/stdworker) image, on a base
+# that ships ALL the tooling its built-in providers shell out to, so ONE image can run
+# any of the std* kinds (stdio / stdshell / stdterraform):
+#   - bash + coreutils + jq  — the stdshell interpreter default + the stdio reference
+#     handler (examples/demos/stdio/testfixtures/handler.sh).
+#   - tfenv + tofuenv        — the stdterraform version managers. `terraform`/`tofu` on
+#     PATH are their SHIMS: per module, run.sh resolves the version from the module's
+#     required_version (latest-allowed) or a pin (spec.tf_version) and AUTO-INSTALLS it,
+#     so this image supports ANY Terraform/OpenTofu version, not a baked one. tfenv →
+#     HashiCorp Terraform (BUSL-1.1); tofuenv → OpenTofu (MPL-2.0). `shasum` is present
+#     so both verify their downloads against the publisher's SHA256.
+#   - aws / gcloud / az      — the stdterraform module-source fetchers for s3:// /
+#     gs:// / azblob://, AND the S3/GCS/Azure state backends' ambient-identity auth.
+#   - git + curl             — the git:: and https:: module sources (+ used to install
+#     the version managers).
+#
+# This is a SEPARATE image from the root Dockerfile (which ships only the DB-less
+# control/broker `converge` binary + `conctl` — NOT the worker); this worker image is
+# deliberately heavier because it hosts the shell-out providers. Build it from the repo
+# root:  docker build -f Dockerfile.stdworker -t converge-stdworker .  (or `just
+# docker-stdworker`; the stdterraform demo does exactly this). The Go worker binary is
+# PREBUILT on the host (static, linux/amd64) by `just build` and copied in — no Go here.
+
+# debian-slim base: a shell + apt for the multi-cloud CLIs + the bash version managers
+# (aws/gcloud/az install far more cleanly here than on musl alpine). Kept lean via
+# --no-install-recommends and cleaned layers.
+FROM debian:12-slim
+
+ENV DEBIAN_FRONTEND=noninteractive
+
+# tfenv/tofuenv are cloned at *_ROOT (the read-only tool checkout); their `bin/` dirs go
+# on PATH FIRST so `terraform`/`tofu` resolve to the SHIMS (install-on-demand + dispatch).
+# We DON'T set *_CONFIG_DIR here: it defaults to *_ROOT (tfenv lib/helpers.sh:
+# `TFENV_CONFIG_DIR="$TFENV_ROOT"` when unset). No version is baked into the image — the
+# managers install the version each MODULE needs at RUNTIME (run.sh resolves it from the
+# module's required_version / spec.tf_version, then `install`s it). CONFIG_DIR is switched
+# to a WRITABLE path by the entrypoint (see below), because the version managers write ALL
+# their runtime state (the installed-versions dir + the active-`version` file that `use`
+# writes) under CONFIG_DIR — and the Helm worker runs readOnlyRootFilesystem:true. The
+# runtime install therefore lands a REAL version dir directly under the writable CONFIG_DIR,
+# which `use`'s `find … -type d` resolver finds (a mirrored dir-symlink to a read-only
+# pre-bake would NOT be, since `-type d` skips symlinks).
+ENV TFENV_ROOT=/opt/tfenv \
+    TOFUENV_ROOT=/opt/tofuenv \
+    PATH=/opt/tfenv/bin:/opt/tofuenv/bin:/usr/local/bin:/usr/bin:/bin
+
+# Core tooling + the three cloud CLIs + the two version managers.
+#   perl → provides `shasum` (tfenv/tofuenv verify downloads against published SHA256).
+#   awscli v2 from the bundled installer (the distro awscli is v1/old); gcloud + az from
+#   their apt repos. tfenv/tofuenv are bash tools cloned into their roots. No Terraform/
+#   OpenTofu binary is pre-baked — it is installed dynamically on first use per module.
+RUN set -eux; \
+    apt-get update; \
+    apt-get install -y --no-install-recommends \
+        bash coreutils ca-certificates curl git jq gnupg unzip perl tar gzip; \
+    # AWS CLI v2 (arch-aware).
+    arch="$(dpkg --print-architecture)"; \
+    case "$arch" in \
+      amd64) awszip="awscli-exe-linux-x86_64.zip" ;; \
+      arm64) awszip="awscli-exe-linux-aarch64.zip" ;; \
+      *) echo "unsupported arch: $arch" >&2; exit 1 ;; \
+    esac; \
+    curl -fsSL "https://awscli.amazonaws.com/$awszip" -o /tmp/awscliv2.zip; \
+    unzip -q /tmp/awscliv2.zip -d /tmp; /tmp/aws/install; rm -rf /tmp/aws /tmp/awscliv2.zip; \
+    # Google Cloud CLI (provides `gcloud storage`).
+    echo "deb [signed-by=/usr/share/keyrings/cloud.google.gpg] https://packages.cloud.google.com/apt cloud-sdk main" \
+        > /etc/apt/sources.list.d/google-cloud-sdk.list; \
+    curl -fsSL https://packages.cloud.google.com/apt/doc/apt-key.gpg | gpg --dearmor -o /usr/share/keyrings/cloud.google.gpg; \
+    # Azure CLI (provides `az`).
+    curl -fsSL https://packages.microsoft.com/keys/microsoft.asc | gpg --dearmor -o /usr/share/keyrings/microsoft.gpg; \
+    echo "deb [arch=$arch signed-by=/usr/share/keyrings/microsoft.gpg] https://packages.microsoft.com/repos/azure-cli bookworm main" \
+        > /etc/apt/sources.list.d/azure-cli.list; \
+    apt-get update; \
+    apt-get install -y --no-install-recommends google-cloud-cli azure-cli; \
+    apt-get clean; rm -rf /var/lib/apt/lists/*; \
+    # tfenv + tofuenv: shallow clone into their roots (the SHIMS + install logic only —
+    # no version baked; run.sh installs what each module needs at runtime).
+    git clone --quiet --depth 1 https://github.com/tfutils/tfenv.git "$TFENV_ROOT"; \
+    git clone --quiet --depth 1 https://github.com/tofuutils/tofuenv.git "$TOFUENV_ROOT"; \
+    # World-READABLE/executable roots so any (non-root) worker UID can read the tool.
+    # NOT writable: runtime writes (the installed version + the active-version file) go to
+    # the writable CONFIG_DIR under /tmp the entrypoint sets up, so the root FS stays read-only.
+    chmod -R a+rX "$TFENV_ROOT" "$TOFUENV_ROOT"
+
+# The prebuilt worker binary (built by `just build` / `just docker-stdworker` for
+# linux/amd64) + the entrypoint that points tfenv/tofuenv at a writable CONFIG_DIR (so the
+# version managers can install-on-demand + write their version file under readOnlyRootFilesystem).
+COPY bin/stdworker.linux-amd64 /usr/local/bin/stdworker
+COPY stdworker-entrypoint.sh /usr/local/bin/stdworker-entrypoint.sh
+RUN chmod a+rx /usr/local/bin/stdworker-entrypoint.sh
+
+# BROKER_ADDR / HEALTH_ADDR / WORKER_MAX_PARALLEL / WORKER_KINDS / STDIO_COMMAND come
+# from the deployment env. The worker holds NO database handle — it pulls config + work
+# from the broker over gRPC. Cloud credentials come from each provider's ambient chain
+# (AWS_* / IRSA, ARM_* / workload identity, GOOGLE_* / Workload Identity).
+#
+# The entrypoint wraps the worker to make tfenv/tofuenv writable-state-clean under a
+# read-only root FS; it exec's the worker so signals + args pass through unchanged.
+ENTRYPOINT ["/usr/local/bin/stdworker-entrypoint.sh"]
