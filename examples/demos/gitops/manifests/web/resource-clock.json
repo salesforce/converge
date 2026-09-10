@@ -1,0 +1,11 @@
+{
+  "type": "resource",
+  "kind": "stdshell",
+  "kind_version": 1,
+  "name": "web-clock",
+  "labels": {},
+  "spec": {
+    "script": "#!/usr/bin/env bash\nset -euo pipefail\ndate -u +%Y-%m-%dT%H:%M:%SZ\n",
+    "timeout_seconds": 60
+  }
+}

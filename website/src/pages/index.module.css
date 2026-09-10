@@ -1,0 +1,60 @@
+/* Homepage-only styles. Scoped as a CSS module so they never leak into the
+   themed doc pages. The hero uses the project's brand blue accent family, for
+   visual continuity with the logo and the in-app UI. */
+
+.heroBanner {
+  padding: 4rem 0 3rem;
+  text-align: center;
+  position: relative;
+  overflow: hidden;
+  background: radial-gradient(
+    ellipse 120% 80% at 50% -10%,
+    var(--ifm-color-primary-lightest),
+    var(--ifm-background-color) 65%
+  );
+}
+
+.heroTitle {
+  font-size: clamp(2.5rem, 6vw, 4rem);
+  font-weight: 800;
+  letter-spacing: -0.02em;
+  margin-bottom: 0.5rem;
+}
+
+.heroTagline {
+  font-size: clamp(1.1rem, 2.4vw, 1.4rem);
+  max-width: 780px;
+  margin: 0 auto 1rem;
+  color: var(--ifm-color-emphasis-800);
+  line-height: 1.5;
+}
+
+.heroSub {
+  font-size: 1rem;
+  max-width: 720px;
+  margin: 0 auto 2rem;
+  color: var(--ifm-color-emphasis-700);
+}
+
+.buttons {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  justify-content: center;
+  gap: 0.75rem;
+  margin-bottom: 2.5rem;
+}
+
+.heroDemo {
+  width: 100%;
+  max-width: 900px;
+  border-radius: 16px;
+  border: 1px solid var(--ifm-color-emphasis-200);
+  box-shadow: 0 24px 64px rgba(40, 60, 110, 0.18);
+}
+
+@media screen and (max-width: 768px) {
+  .heroBanner {
+    padding: 2.5rem 1rem 2rem;
+  }
+}

@@ -1,0 +1,4 @@
+# chart-testing (ct) install/lint case: control + broker only (the default), with a
+# throwaway DSN so the render's fail-guard is satisfied.
+database:
+  url: postgres://u:p@ct-db:5432/orchestrator?sslmode=require

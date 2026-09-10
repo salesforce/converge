@@ -1,0 +1,96 @@
+{
+  "kind": "stdcel",
+  "kind_version": 1,
+  "max_transient_attempts": 20,
+  "description": "stdcel/v1 — GENERIC, kro-style composer: a RESOURCE GRAPH DEFINITION expressed entirely as DATA. The providerconfig `spec` carries a `resources` list (each a child kind + a CEL-templated name/spec); the stdcel resource's OWN spec is the instance inputs, read in CEL as ${schema.spec.x}. Fields wire across the graph with CEL \u2014 ${other.spec.x} inlines a sibling's resolved spec at compose time, ${other.status.x} becomes a dependency edge + value flow (the engine schedules that resource first and flows its status in). The provider INFERS the dependency order from these references (topological), rejecting cycles/unknown/self references. One provider serves ANY composition with no code change \u2014 the generalisation of celbom (whose CEL is only a `when` selector over a fixed BOM fan-out). CEL is non-Turing-complete, so an operator-supplied graph is safe to run. Edit the graph + re-apply = recompose, no worker redeploy. Its child kinds must have their own applied CRDs; children DELETE with the root.",
+  "spec_schema": {
+    "type": "object",
+    "additionalProperties": true,
+    "description": "The INSTANCE inputs \u2014 the values a graph reads as ${schema.spec.*}. Shape is up to the graph author (kro's top-level schema); left open here so one stdcel kind can back many graphs."
+  },
+  "config_schema": {
+    "type": "object",
+    "additionalProperties": false,
+    "description": "The RESOURCE GRAPH DEFINITION: the set of child resources and how their fields are wired with CEL. Structured, queryable JSON in the providerconfig spec \u2014 the point of the CEL approach vs an opaque program.",
+    "properties": {
+      "resources": {
+        "type": "array",
+        "description": "The child graph. Declaration order is irrelevant \u2014 the provider infers the dependency order from the CEL references between resources.",
+        "items": {
+          "type": "object",
+          "additionalProperties": false,
+          "properties": {
+            "id": {
+              "type": "string",
+              "minLength": 1,
+              "description": "Graph-local handle other resources reference in CEL as ${<id>.spec.x} / ${<id>.status.x}. Unique within the graph; never leaves the composer."
+            },
+            "template": {
+              "type": "object",
+              "additionalProperties": false,
+              "description": "The child resource to compose. Every string leaf of name/spec/labels may carry ${...} CEL expressions over `schema.spec` (the instance) and sibling resources.",
+              "properties": {
+                "kind": {
+                  "type": "string",
+                  "minLength": 1,
+                  "description": "Child resource kind to compose (must have an applied CRD)."
+                },
+                "kind_version": {
+                  "type": "integer",
+                  "minimum": 1,
+                  "description": "Child web-API version (v1, v2, \u2026). REQUIRED \u2014 no implicit v1 default."
+                },
+                "name": {
+                  "type": "string",
+                  "minLength": 1,
+                  "description": "Child name \u2014 a CEL string template, e.g. \"${schema.spec.name}-vpc\"."
+                },
+                "spec": {
+                  "type": "object",
+                  "additionalProperties": true,
+                  "description": "Child spec with CEL-expression leaves. A whole-value \"${expr}\" keeps the result's native type (int/bool/list/map); an interpolation \"a-${expr}-b\" is a string. A ${other.status.x} leaf is emitted as null and filled by the value flow at runtime."
+                },
+                "labels": {
+                  "type": "object",
+                  "additionalProperties": {
+                    "type": "string"
+                  },
+                  "description": "Extra labels stamped on the child (values may interpolate ${...}). The provider's own composed_by/graph_id labels win on a clash."
+                }
+              },
+              "required": [
+                "kind",
+                "kind_version",
+                "name"
+              ]
+            }
+          },
+          "required": [
+            "id",
+            "template"
+          ]
+        }
+      }
+    },
+    "required": [
+      "resources"
+    ]
+  },
+  "status_schema": {
+    "type": "object",
+    "additionalProperties": true
+  },
+  "reactions": [
+    {
+      "name": "compose",
+      "trigger": "specChange",
+      "emits": [
+        "children",
+        "status",
+        "conditions"
+      ]
+    }
+  ],
+  "resync_interval_secs": 300,
+  "resync_recomposes": true
+}

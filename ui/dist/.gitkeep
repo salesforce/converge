@@ -1,0 +1,1 @@
+# Placeholder so //go:embed dist/* in ../embed.go resolves before a UI build.

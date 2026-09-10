@@ -1,0 +1,50 @@
+# Build artifacts
+bin/
+# Release artifacts: the per-platform tarballs + SHA256SUMS `just release-binaries`
+# produces (attached to the GitHub Release by the release workflow; never committed).
+dist/
+*.test
+*.out
+coverage.txt
+coverage.html
+# Root-built command binaries (produced by a bare `go build ./cmd/<x>`, whose
+# default output is ./<x>); never commit. `just build` writes to bin/ instead.
+/converge
+/worker
+/stdworker
+/conctl
+
+# Local AWS credentials (sourced before aws/kubectl calls) — never commit
+creds
+
+# Private, non-open-source files kept locally only (e.g. company deploy scripts:
+# private/deploy/{clear-database,create-aurora-global}.sh) — never commit
+private/
+
+# Docusaurus documentation site (website/): dependencies, build output, and the
+# generated content tree that website/scripts/sync-docs.mjs projects from the
+# canonical docs. The site is rebuilt from source in CI — only its source
+# (config, src/, static/, scripts/, package.json + lockfile) is committed.
+website/node_modules/
+website/build/
+website/.docusaurus/
+website/docs/
+# The OpenAPI spec copied from internal/api/openapi.golden.yaml by sync-docs.mjs
+# (Redoc renders it at /api); the golden is the committed source of truth.
+website/static/openapi.yaml
+website/.env.local
+website/.env.development.local
+website/.env.production.local
+
+# Editor / OS
+.DS_Store
+.idea/
+.vscode/*
+.claude
+!.vscode/extensions.json
+*.swp
+*.swo
+
+# tmp / log
+*.log
+/tmp/

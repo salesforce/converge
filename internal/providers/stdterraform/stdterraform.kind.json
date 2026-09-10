@@ -1,0 +1,150 @@
+{
+  "kind": "stdterraform",
+  "kind_version": 1,
+  "max_transient_attempts": 20,
+  "finalizer_name": "converge.dev/stdterraform",
+  "description": "stdterraform/v1 — Runs a user's Terraform module as a converge resource (the Terraform-Enterprise model: the module ships NO backend block; the platform owns state placement + locking, and each resource is its own state + its own lock). spec.source points at a module \u2014 s3://\u2026tar.gz, gs://\u2026tar.gz, azblob://acct/container/\u2026tar.gz, https://\u2026tar.gz, or git::https://repo[//subdir][?ref=REF] (each object-store scheme uses that cloud's ambient-identity CLI: aws / gcloud / az); the worker (bin/stdworker, internal/providers/stdterraform) fetches it, AUTO-RESOLVES the Terraform/OpenTofu version for the module via tfenv (binary=terraform) / tofuenv (binary=tofu) \u2014 spec.tf_version pin, else a bundle .terraform-version/.opentofu-version, else latest-allowed from the module's required_version \u2014 installs it, injects a state backend keyed to the resource's UUID, and runs a real `terraform apply` (work) with the module's outputs becoming status. On delete it runs `terraform destroy` (teardown) and strips the finalizer only once the real infra is gone. The state backend is MULTI-CLOUD, chosen in the providerconfig `backend` field with that cloud's NATIVE locking auto-on: s3 (use_lockfile \u2014 no DynamoDB, needs terraform/tofu \u22651.10), azurerm (blob lease), gcs (atomic lock object). Advanced/other backends: drop a raw backend.tf in the providerconfig `data` bundle with the __CONVERGE_STATE_KEY__ placeholder where the per-resource key goes. Credentials come from each cloud's standard chain (AWS_*/ARM_*/GOOGLE_*) the worker inherits.",
+  "spec_schema": {
+    "type": "object",
+    "additionalProperties": false,
+    "properties": {
+      "source": {
+        "type": "string",
+        "description": "Module location: s3://\u2026tar.gz, gs://\u2026tar.gz, azblob://acct/container/\u2026tar.gz, https://\u2026tar.gz, or git::https://repo[//subdir][?ref=REF]."
+      },
+      "vars": {
+        "type": "object",
+        "additionalProperties": {
+          "type": "string"
+        },
+        "description": "Terraform input variables (-var name=value) for the module."
+      },
+      "tf_version": {
+        "type": "string",
+        "description": "Pin the Terraform/OpenTofu version (tfenv/tofuenv token: exact e.g. 1.7.5, latest, latest:<regex>, min-required, latest-allowed). Empty = auto: honor a bundle .terraform-version/.opentofu-version, else latest-allowed (newest the module's required_version permits)."
+      }
+    },
+    "required": [
+      "source"
+    ]
+  },
+  "status_schema": {
+    "type": "object",
+    "additionalProperties": false,
+    "properties": {
+      "outputs": {
+        "type": "object",
+        "additionalProperties": {
+          "type": "string"
+        },
+        "description": "Terraform outputs the module produced (name -> value)."
+      },
+      "applied": {
+        "type": "boolean",
+        "description": "True once terraform apply has succeeded."
+      }
+    },
+    "required": [
+      "applied"
+    ]
+  },
+  "config_schema": {
+    "type": "object",
+    "additionalProperties": false,
+    "description": "Where-to-store-state settings, shared by every resource of the kind (the operator configures the backend once). Set `backend` + that backend's block below, OR supply a raw backend.tf in the providerconfig `data` bundle (ignored here when a bundle is present). The per-resource state key is always derived from state_prefix + kind + the resource UUID.",
+    "properties": {
+      "backend": {
+        "type": "string",
+        "enum": [
+          "s3",
+          "azurerm",
+          "gcs"
+        ],
+        "description": "State backend to generate (default s3). Ignored if a raw backend.tf is in the providerconfig `data` bundle."
+      },
+      "state_prefix": {
+        "type": "string",
+        "description": "Key/path prefix for state objects (default terraform/); the per-resource UUID is appended."
+      },
+      "binary": {
+        "type": "string",
+        "enum": [
+          "terraform",
+          "tofu"
+        ],
+        "description": "Terraform CLI to run (default terraform). s3 native locking needs \u22651.10."
+      },
+      "s3": {
+        "type": "object",
+        "additionalProperties": false,
+        "description": "AWS S3 backend (when backend=s3). Locking is native (use_lockfile) \u2014 no DynamoDB.",
+        "properties": {
+          "bucket": {
+            "type": "string",
+            "description": "S3 bucket for the state (required for backend=s3)."
+          },
+          "region": {
+            "type": "string",
+            "description": "AWS region of the bucket (default us-east-1)."
+          },
+          "endpoint": {
+            "type": "string",
+            "description": "S3 endpoint override for an S3-compatible store (e.g. http://localstack:4566). Empty = real AWS."
+          }
+        }
+      },
+      "azurerm": {
+        "type": "object",
+        "additionalProperties": false,
+        "description": "Azure Blob backend (when backend=azurerm). Locking is automatic (blob lease).",
+        "properties": {
+          "storage_account": {
+            "type": "string",
+            "description": "Azure Storage account name (required for backend=azurerm)."
+          },
+          "container": {
+            "type": "string",
+            "description": "Blob container for the state (required for backend=azurerm)."
+          },
+          "resource_group": {
+            "type": "string",
+            "description": "Resource group of the storage account (required unless using AzureAD auth)."
+          },
+          "use_azuread_auth": {
+            "type": "boolean",
+            "description": "Reach the state blob with Entra ID (workload identity) instead of an account key."
+          }
+        }
+      },
+      "gcs": {
+        "type": "object",
+        "additionalProperties": false,
+        "description": "Google Cloud Storage backend (when backend=gcs). Locking is automatic (atomic lock object).",
+        "properties": {
+          "bucket": {
+            "type": "string",
+            "description": "GCS bucket for the state (required for backend=gcs)."
+          }
+        }
+      }
+    }
+  },
+  "reactions": [
+    {
+      "name": "work",
+      "trigger": "specChange",
+      "emits": [
+        "status",
+        "conditions"
+      ]
+    },
+    {
+      "name": "teardown",
+      "trigger": "deleteRequested",
+      "emits": [
+        "finalizer"
+      ],
+      "finalizer": "converge.dev/stdterraform"
+    }
+  ]
+}

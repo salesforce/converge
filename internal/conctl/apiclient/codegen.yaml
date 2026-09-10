@@ -1,0 +1,15 @@
+# oapi-codegen config for the conctl API client. Generated output is committed
+# (types.gen.go + client.gen.go); regenerate with `just codegen-cli` after an
+# API change. Pinned tool version lives in the justfile (single source of truth).
+package: apiclient
+output: client.gen.go
+generate:
+  # Model structs for every schema in the golden spec (request/response bodies).
+  models: true
+  # A low-level *http.Request-per-operation client and a typed
+  # ClientWithResponses wrapper that unmarshals into the models above.
+  client: true
+output-options:
+  # Skip the embedded-spec + server-interface blobs — the CLI only needs the
+  # client half, and embedding the whole 3400-line spec bloats the binary.
+  skip-prune: false

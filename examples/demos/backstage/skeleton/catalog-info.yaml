@@ -1,0 +1,24 @@
+# Scaffolded into the PROVISIONED deployment's repo by the template's fetch:template step.
+# It registers the new deployment as a Backstage Component that links back to its live
+# Converge classicbom ROOT resource, so a developer jumps from the Backstage catalog straight
+# to the composing/rolling-up status in the Converge UI. Templated values (${{ … }}) are
+# filled by the scaffolder from the form.
+apiVersion: backstage.io/v1alpha1
+kind: Component
+metadata:
+  name: ${{ values.name }}
+  description: A deployment provisioned on the platform (Converge classicbom — composes accounts/VPCs/TGWs/routes).
+  annotations:
+    # Deep-link to the live root resource in the Converge UI.
+    converge.sh/resource-url: ${{ values.convergeUrl }}
+  links:
+    - url: ${{ values.convergeUrl }}
+      title: Live status (Converge UI)
+      icon: dashboard
+  tags:
+    - converge
+    - classicbom
+spec:
+  type: service
+  lifecycle: production
+  owner: ${{ values.owner }}

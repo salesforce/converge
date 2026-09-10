@@ -1,0 +1,117 @@
+{
+  "kind": "celbom",
+  "kind_version": 1,
+  "name": "demo-bom",
+  "labels": {
+    "demo": "datadriven",
+    "composer": "celbom",
+    "env": "demo"
+  },
+  "spec": {
+    "deployment_instance": {
+      "name": "demo-bom",
+      "functional_domains": [
+        {
+          "name": "fd-00",
+          "service_teams": [
+            {
+              "name": "admiring-turing"
+            },
+            {
+              "name": "bold-curie"
+            },
+            {
+              "name": "clever-bohr"
+            },
+            {
+              "name": "eager-lovelace"
+            },
+            {
+              "name": "happy-newton"
+            }
+          ]
+        },
+        {
+          "name": "fd-01",
+          "service_teams": [
+            {
+              "name": "jolly-hopper"
+            },
+            {
+              "name": "keen-euler"
+            },
+            {
+              "name": "loving-fermi"
+            },
+            {
+              "name": "modest-galileo"
+            },
+            {
+              "name": "nifty-tesla"
+            }
+          ]
+        },
+        {
+          "name": "fd-02",
+          "service_teams": [
+            {
+              "name": "peaceful-pascal"
+            },
+            {
+              "name": "quirky-shannon"
+            },
+            {
+              "name": "serene-kepler"
+            },
+            {
+              "name": "sharp-noether"
+            },
+            {
+              "name": "vibrant-knuth"
+            }
+          ]
+        },
+        {
+          "name": "fd-03",
+          "service_teams": [
+            {
+              "name": "wizardly-ritchie"
+            },
+            {
+              "name": "zen-dijkstra"
+            },
+            {
+              "name": "brave-hamilton"
+            },
+            {
+              "name": "cool-mcclintock"
+            },
+            {
+              "name": "gifted-franklin"
+            }
+          ]
+        },
+        {
+          "name": "fd-04",
+          "service_teams": [
+            {
+              "name": "hopeful-darwin"
+            },
+            {
+              "name": "kind-faraday"
+            },
+            {
+              "name": "lucid-maxwell"
+            },
+            {
+              "name": "optimistic-bell"
+            },
+            {
+              "name": "trusting-feynman"
+            }
+          ]
+        }
+      ]
+    }
+  }
+}
